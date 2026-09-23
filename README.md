@@ -115,3 +115,7 @@ example:
   and `DEMOSRV`, tests `DEMOCUT_T`, and driver `IMOQDEMO`.
 
 `BUILD` copies and runs the examples only when you pass `'*YES'`.
+
+## License
+
+iMoq is released under the [MIT License](LICENSE).
