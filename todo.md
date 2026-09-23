@@ -7,8 +7,8 @@ Work still to do on iMoq, from a review of its features and gaps
 
 - [x] Add a LICENSE file. Without one, the public repository isn't open source
       and nobody can legally reuse it.
-- [ ] Add a "Limitations" section to the Programmer's Guide (see
-      [Limits of the approach](#limits-of-the-approach)).
+- [x] Add a "Limitations" section to the Programmer's Guide (section 11 of
+      [the guide](docs/PROGRAMMERS_GUIDE.md#11-limitations)).
 - [ ] Add examples for `LIB()`, `*VALUE` passing and the non-character types.
 - [ ] Support data structure subfields (see [Features](#features)).
 - [ ] Add in-order verification and unused-stub detection.
@@ -18,8 +18,6 @@ Work still to do on iMoq, from a review of its features and gaps
 - [ ] **Data structure subfields.** A data structure can only be described as
       one `*CHAR`, so packed or zoned subfields can't be matched or set. Let
       `ARGS` and `SETPARM` address a subfield by offset, type and length.
-- [ ] **Call the real object.** Let a stub pass the call on to the real program
-      or procedure, like Moq's `CallBase` or Mockito's `spy`.
 - [ ] **Answers built from the arguments.** For example, set parameter 2 from
       parameter 1, or call a user procedure like Moq's `Callback`. Today every
       answer is a fixed value.
@@ -38,26 +36,21 @@ Work still to do on iMoq, from a review of its features and gaps
       program with a qualified name (`CALL MYLIB/X`, `EXTPGM('MYLIB/X')`), which
       bypasses the mock.
 
+### Decided against
+
+- **Call the real object** (like Moq's `CallBase` or Mockito's `spy`). Letting
+  a test reach the real program or procedure is too risky: a test could update
+  real data.
+
 ## Documentation
 
-- [ ] Limitations section in the Programmer's Guide.
+- [x] Limitations section in the Programmer's Guide.
 - [ ] Example that creates mocks in another library with `LIB()`.
 - [ ] Example of a `*VALUE` parameter.
 - [ ] Example of `THROW(*MOCK …)`.
 - [ ] Example of `IMOQRMV OBJ(name)` (removing a single mock).
 - [ ] Examples using varchar, date, timestamp, zoned, float and pointer
       parameters. Today only the conversion unit tests (`IMOQENG_T`) use them.
-
-### Limits of the approach
-
-These probably can't be fixed, but they should be documented together:
-
-- Procedures in modules bound by copy, or in the same program, can't be mocked.
-- Programs called with a qualified name bypass the library list and the mock.
-- Objects in QSYS and product libraries can't be mocked, because those
-  libraries are searched before QTEMP.
-- Code submitted to another job (`SBMJOB`) doesn't see the mocks.
-- Files, SQL, data areas and data queues are out of scope.
 
 ## Testing
 

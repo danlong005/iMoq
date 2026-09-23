@@ -26,7 +26,8 @@ iMoq gives your CL test driver commands that put stand-in objects in QTEMP. The 
 8. [Writing tests in RPG](#8-writing-tests-in-rpg)
 9. [Test isolation](#9-test-isolation)
 10. [Troubleshooting](#10-troubleshooting)
-11. [Quick reference](#11-quick-reference)
+11. [Limitations](#11-limitations)
+12. [Quick reference](#12-quick-reference)
 
 ---
 
@@ -542,7 +543,49 @@ select * from qtemp.imoq_sig;                          -- declared layouts
 
 ---
 
-## 11. Quick reference
+## 11. Limitations
+
+iMoq replaces a dependency by putting an object with the same name where IBM i looks first: earlier in the library list, or in the service program the caller activates through `*LIBL`. Anything IBM i finds some other way can't be replaced.
+
+### What can't be mocked
+
+| Dependency | Why | What to do instead |
+|---|---|---|
+| A procedure in a module bound by copy (`CRTPGM MODULE(…)`), or a subprocedure in the same module | It's bound into the caller when the caller is created, so there's no separate object to replace | Move it into a service program bound through `*LIBL`, or test it directly |
+| A program called by qualified name: `CALL PGM(MYLIB/CUSTLKUP)`, `EXTPGM('MYLIB/CUSTLKUP')` | IBM i looks only in the named library, never in QTEMP. `IMOQCHK` doesn't detect this | Call the program unqualified, through the library list |
+| A service program bound with a library name | The caller always activates the object in that library ([Rule 2](#rule-2-bind-service-programs-through-libl)). `IMOQCHK` reports this as **IMQ0021** | Bind with `BNDSRVPGM((*LIBL/name))` |
+| A program or service program in QSYS or a product library, such as `QCMDEXC` or a system API | Those libraries are searched before QTEMP, so the mock would be hidden (**IMQ0010**) | Call it through your own wrapper program or procedure, and mock the wrapper |
+| Files, SQL tables, data areas, data queues | They aren't program calls | Put the access in a program or procedure and mock that, or point the test at test data |
+
+### Only the driver's job
+
+Stubs and recorded calls live in QTEMP, so they belong to the job that ran the iMoq commands ([Rule 4](#rule-4-one-job)). Code under test that runs in another job, for example a program it submits with `SBMJOB`, or a server job or data queue listener it sends work to, doesn't see them:
+
+- A mock in QTEMP isn't visible there at all, so the real object runs.
+- A mock created with `LIB()` is visible, but finds no stubs in that job. The call does nothing: parameters are left unchanged, and the call isn't recorded, even for a strict mock.
+
+To test that code, call it directly from the driver job.
+
+### Parameters that can't be described exactly
+
+- **Data structures and arrays** are described as one `*CHAR` of their total size. Matchers, `SETPARM` and captured values then treat the whole thing as text, which only makes sense when every subfield or element is character. With packed, zoned or binary subfields, you can still count calls and use `*ANY`, `*OMIT` and `*NOTPASSED`.
+- **`*VARCHAR` passed `*VALUE`** isn't supported.
+- **Sizes:** up to 64 parameters, command values of at most 256 characters, and captured values cut at 1,024 characters. See [Limits](#limits) for the full list.
+
+### Not supported yet
+
+Some things Mockito and Moq can do aren't in iMoq yet. The planned work is tracked in [todo.md](../todo.md).
+
+- **Answers built from the arguments.** Every answer is a fixed value; a stub can't copy an input to an output or call your own procedure.
+- **Checking call order.** `IMOQVERIFY` counts calls but can't check that one call came before another.
+- **Unused stubs.** A stub that no call matched isn't reported, so a wrong matcher shows up only as a missing answer.
+- **Either-or matchers.** All matchers in one `ARGS` must match. For alternatives, define one stub per alternative.
+
+iMoq also never passes a call on to the real object, as a Mockito spy or Moq's `CallBase` would. That's deliberate: a test that can reach the real program can also change real data.
+
+---
+
+## 12. Quick reference
 
 The mock is identified by `OBJ(name)`. Service program mocks also take `PROC(exportName)`; for program mocks, omit `PROC`.
 
