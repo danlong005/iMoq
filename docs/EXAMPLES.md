@@ -32,6 +32,7 @@ For the concepts behind the examples, see the
 - Test housekeeping
   - [EXRESET: clear calls or stubs between tests](#exreset-clear-calls-or-stubs-between-tests)
   - [EXCL: use the mocks from CL](#excl-use-the-mocks-from-cl)
+  - [EXAPI: everything the RPG API can do](#exapi-everything-the-rpg-api-can-do)
   - [EXAMPLES: run every example](#examples-run-every-example)
 - [The end-to-end demo](#the-end-to-end-demo)
 - [Writing your own test](#writing-your-own-test)
@@ -574,6 +575,52 @@ What to notice:
 - **`IMOQCOUNT` and `IMOQGETARG` only work in CL programs,** because they return
   values into CL variables. RPG uses `imoq_count` and `imoq_arg`.
 - **A failed `IMOQVERIFY` sends IMQ0200,** which CL can monitor.
+
+### EXAPI: everything the RPG API can do
+
+Test program [`EXAPI_T`](../examples/QRPGLESRC/EXAPI_T.rpgle), driver [`EXAPI`](../examples/QCLLESRC/EXAPI.clle)
+
+The other examples run the commands through `imoq('…')`. `EXAPI` does the same
+jobs with the RPG API, one test procedure per topic:
+
+| Procedure | Shows |
+|---|---|
+| `stubbing` | `imoq_when`, a series of `imoq_returns`, `imoq_setParm`, `imoq_times(h : 1)` and `IMOQ_ALWAYS`, and the newest stub winning |
+| `matchers` | All eleven matchers: `IMOQ_EQ`, `NE`, `LIKE`, `BLANK` on text; `GT`, `GE`, `LT`, `LE` on numbers (two on one parameter make a range); `ANY`, `OMIT`, `NOTPASSED` on an optional parameter |
+| `typedValues` | Times and timestamps in `imoq_with`, numbers and dates in `imoq_setParm`, timestamp and time return values |
+| `throwing` | `imoq_throws` with `IMOQ_MOCK` (IMQ0101) and with `CPF9898` from `QCPFMSG` |
+| `verifying` | `imoq_verify` with `imoq_calledOnce`, `imoq_calledTimes`, `imoq_calledAtLeast`, `imoq_calledAtMost`, `imoq_neverCalled`, `imoq_matchCount`, `imoq_noMoreCalls` with and without a mock name, and a failed check's message |
+| `capturing` | `imoq_arg`, `imoq_argNum`, `imoq_argDate`, `imoq_argTime`, `imoq_argTimestamp`, `imoq_argInd`, `imoq_argPassed` and `imoq_count` |
+| `resetting` | `imoq_reset()` and `imoq_reset(obj : IMOQ_CALLS / IMOQ_STUBS)`, and a removed stub's handle sending IMQ0300 |
+
+```rpgle
+h = imoq_when('EXPRICE' : 'EX_DISCOUNT');
+imoq_with(h : 1 : IMOQ_GE : 50);         // two matchers: a range
+imoq_with(h : 1 : IMOQ_LE : 60);
+imoq_returns(h : 2);
+
+h = imoq_when('EXPRICE' : 'EX_SCHEDULE');
+imoq_with(h : 2 : IMOQ_GE : t'12.00.00');                    // time
+imoq_setParm(h : 5 : 12.5);                                  // number
+imoq_setParm(h : 6 : d'2026-10-15');                         // date
+imoq_returns(h : z'2026-10-15-08.00.00.000000');             // timestamp
+
+v = imoq_verify('EXPRICE' : 'EX_PRICE');
+imoq_with(v : 1 : IMOQ_EQ : 'A0001');
+expect(imoq_calledTimes(v : 2) : imoq_lastError());
+```
+
+What to notice:
+- **No command strings.** Each keyword of `IMOQWHEN` and `IMOQVERIFY` is a
+  call on a handle, and values are RPG values: `12.5`, `d'2026-10-15'`,
+  `t'12.00.00'`, `'ACME CORP'`.
+- **The stub answers as soon as `imoq_when` returns,** and each later call
+  adds to it.
+- **Checks return an indicator** and leave the reason in `imoq_lastError()`.
+  Setup mistakes send escape message IMQ0300 instead.
+- **Needs IBM i 7.4 TR5 or later,** for `OVERLOAD`.
+- **For RPGUnit,** `IMOQRU_H` wraps the checks in `assert`; see the
+  [Programmer's Guide](PROGRAMMERS_GUIDE.md#rpgunit-assertions).
 
 ### EXAMPLES: run every example
 

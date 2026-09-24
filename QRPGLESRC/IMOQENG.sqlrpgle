@@ -22,14 +22,24 @@ dcl-ds psds psds qualified;
   lib char(10) pos(81);
 end-ds;
 
-dcl-ds matcher_t qualified template;
-  parmNo int(10);
-  matcher char(10);
-  val varchar(1024);
+// Target of a stub or verification: the mock, the procedure and
+// its declared layout
+dcl-ds target_t qualified template;
+  obj char(10);
+  objType char(7);
+  behavior char(7);
+  proc varchar(4096);
+  kind char(4);
+  lbl varchar(4200);
+  nDefs int(10);
+  defs likeds(imoq_def_t) dim(64);
+  rtnDef likeds(imoq_def_t);
+  hasRtn ind;
 end-ds;
 
 dcl-s gTablesOk ind;
 dcl-s gLastErr varchar(512);
+dcl-s gLastStub int(10);
 
 dcl-ds apiErr_t qualified template;
   bytesProv int(10);
@@ -519,21 +529,50 @@ dcl-proc canEncode;
 end-proc;
 
 // ==================================================================
-// Matchers passed on a command: ARGS((parmNo matcher value) ...)
+// Target resolution
 // ==================================================================
-dcl-proc readMatchers;
+dcl-proc openTarget;
+  dcl-pi *n ind;
+    obj char(10) const;
+    procIn varchar(4096) const;
+    tgt likeds(target_t);
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-s built char(1);
+  dcl-s realLib char(10);
+  dcl-s declared char(1);
+
+  clear tgt;
+  tgt.obj = obj;
+  if not objInfo(obj : tgt.objType : tgt.behavior : built : realLib);
+    setErr(err : 'IMQ0011' : 'Mock ' + %trim(obj) + ' does not exist. '
+         + 'Create it with IMOQPGM or IMOQSRVPGM first');
+    return *off;
+  endif;
+  if not resolveProc(obj : tgt.objType : procIn : tgt.proc : tgt.kind
+                     : declared : err);
+    return *off;
+  endif;
+  tgt.lbl = label(obj : tgt.proc);
+  loadSig(obj : tgt.proc : tgt.defs : tgt.nDefs : tgt.rtnDef
+          : tgt.hasRtn);
+  return *on;
+end-proc;
+
+// ==================================================================
+// Matchers: ARGS((parmNo matcher value) ...)
+// ==================================================================
+
+// Unpack the ARGS list of a command
+dcl-proc unpackMatchers;
   dcl-pi *n ind;
     blob pointer value;
-    m likeds(matcher_t) dim(64);
+    m likeds(imoq_matcher_t) dim(64);
     nM int(10);
-    defs likeds(imoq_def_t) dim(64) const;
-    nDefs int(10) const;
-    lbl varchar(4200) const;
     err likeds(imoq_err_t);
   end-pi;
   dcl-s i int(10);
   dcl-s e pointer;
-  dcl-s msg varchar(256);
 
   clear m;
   nM = lstCount(blob);
@@ -544,34 +583,63 @@ dcl-proc readMatchers;
   for i = 1 to nM;
     e = lstEntry(blob : i);
     m(i).parmNo = int2At(e + 2);
-    m(i).matcher = %xlate(LOWER : UPPER : charAt(e + 4 : 10));
+    m(i).matcher = charAt(e + 4 : 10);
     m(i).val = varyText(e + 14 : 256);
-    if m(i).parmNo < 1 or m(i).parmNo > IMOQ_MAXP;
-      setErr(err : 'IMQ0014' : 'ARGS entry ' + %char(i)
-           + ': parameter number must be 1 to 64');
+  endfor;
+  return *on;
+end-proc;
+
+// Validate one matcher against the target's layout
+dcl-proc checkMatcher;
+  dcl-pi *n ind;
+    m likeds(imoq_matcher_t);
+    what varchar(40) const;
+    tgt likeds(target_t) const;
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-s msg varchar(256);
+
+  m.matcher = %xlate(LOWER : UPPER : m.matcher);
+  if m.parmNo < 1 or m.parmNo > IMOQ_MAXP;
+    setErr(err : 'IMQ0014' : what + ': parameter number must be 1 to 64');
+    return *off;
+  endif;
+  if not imoq_validMatcher(m.matcher);
+    setErr(err : 'IMQ0014' : what + ': ' + %trim(m.matcher)
+         + ' is not a valid matcher');
+    return *off;
+  endif;
+  if m.matcher = '*ANY' or m.matcher = '*OMIT'
+     or m.matcher = '*NOTPASSED';
+    return *on;
+  endif;
+  if m.parmNo > tgt.nDefs;
+    setErr(err : 'IMQ0014' : what + ': parameter ' + %char(m.parmNo)
+         + ' of ' + tgt.lbl + ' is not declared. '
+         + 'Declare its layout with PARMS so values can be compared');
+    return *off;
+  endif;
+  if imoq_isNumeric(tgt.defs(m.parmNo).type)
+     and m.matcher <> '*BLANK' and m.matcher <> '*LIKE';
+    if not canEncode(tgt.defs(m.parmNo) : m.val : msg);
+      setErr(err : 'IMQ0014' : what + ': ' + msg);
       return *off;
     endif;
-    if not imoq_validMatcher(m(i).matcher);
-      setErr(err : 'IMQ0014' : 'ARGS entry ' + %char(i) + ': '
-           + %trim(m(i).matcher) + ' is not a valid matcher');
+  endif;
+  return *on;
+end-proc;
+
+dcl-proc checkMatchers;
+  dcl-pi *n ind;
+    m likeds(imoq_matcher_t) dim(64);
+    nM int(10) const;
+    tgt likeds(target_t) const;
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-s i int(10);
+  for i = 1 to nM;
+    if not checkMatcher(m(i) : 'ARGS entry ' + %char(i) : tgt : err);
       return *off;
-    endif;
-    if m(i).matcher = '*ANY' or m(i).matcher = '*OMIT'
-       or m(i).matcher = '*NOTPASSED';
-      iter;
-    endif;
-    if m(i).parmNo > nDefs;
-      setErr(err : 'IMQ0014' : 'ARGS entry ' + %char(i) + ': parameter '
-           + %char(m(i).parmNo) + ' of ' + lbl + ' is not declared. '
-           + 'Declare its layout with PARMS so values can be compared');
-      return *off;
-    endif;
-    if imoq_isNumeric(defs(m(i).parmNo).type)
-       and m(i).matcher <> '*BLANK' and m(i).matcher <> '*LIKE';
-      if not canEncode(defs(m(i).parmNo) : m(i).val : msg);
-        setErr(err : 'IMQ0014' : 'ARGS entry ' + %char(i) + ': ' + msg);
-        return *off;
-      endif;
     endif;
   endfor;
   return *on;
@@ -579,7 +647,7 @@ end-proc;
 
 dcl-proc describeMatchers;
   dcl-pi *n varchar(1024);
-    m likeds(matcher_t) dim(64) const;
+    m likeds(imoq_matcher_t) dim(64) const;
     nM int(10) const;
   end-pi;
   dcl-s t varchar(1024);
@@ -677,7 +745,7 @@ end-proc;
 dcl-proc callMatches;
   dcl-pi *n ind;
     callId int(10) const;
-    m likeds(matcher_t) dim(64) const;
+    m likeds(imoq_matcher_t) dim(64) const;
     nM int(10) const;
     defs likeds(imoq_def_t) dim(64) const;
     nDefs int(10) const;
@@ -1028,168 +1096,329 @@ dcl-proc imoq_cl_when export;
     times int(10) const;
     err likeds(imoq_err_t);
   end-pi;
-  dcl-s objType char(7);
-  dcl-s behavior char(7);
-  dcl-s built char(1);
-  dcl-s realLib char(10);
-  dcl-s proc varchar(4096);
-  dcl-s kind char(4);
-  dcl-s declared char(1);
-  dcl-ds defs likeds(imoq_def_t) dim(64);
-  dcl-ds rtnDef likeds(imoq_def_t);
-  dcl-s hasRtn ind;
-  dcl-s nDefs int(10);
-  dcl-ds m likeds(matcher_t) dim(64);
-  dcl-s nM int(10);
-  dcl-s rtnVal varchar(1024) dim(32);
-  dcl-s nRtn int(10);
-  dcl-s setNo int(10) dim(64);
-  dcl-s setVal varchar(1024) dim(64);
-  dcl-s nSet int(10);
-  dcl-s thrId char(7);
-  dcl-s thrMsgf char(10);
-  dcl-s thrLib char(10);
-  dcl-s thrDta varchar(512);
+  dcl-ds stub likeds(imoq_stub_t);
   dcl-s p pointer;
   dcl-s e pointer;
   dcl-s i int(10);
-  dcl-s id int(10);
-  dcl-s seq int(10);
-  dcl-s parmNo int(5);
-  dcl-s v varchar(1024);
-  dcl-s mt char(10);
-  dcl-s lbl varchar(4200);
-  dcl-s m256 varchar(256);
 
   clearErr(err);
-  ensureTables();
-  if not objInfo(obj : objType : behavior : built : realLib);
-    setErr(err : 'IMQ0011' : 'Mock ' + %trim(obj) + ' does not exist. '
-         + 'Create it with IMOQPGM or IMOQSRVPGM first');
-    return;
-  endif;
-  if not resolveProc(obj : objType : varyText(%addr(procVary) : 256)
-                     : proc : kind : declared : err);
-    return;
-  endif;
-  lbl = label(obj : proc);
-  if kind = 'DATA';
-    setErr(err : 'IMQ0012' : proc + ' is a data export and cannot be '
-         + 'stubbed');
-    return;
-  endif;
-  loadSig(obj : proc : defs : nDefs : rtnDef : hasRtn);
+  clear stub;
+  stub.obj = obj;
+  stub.proc = varyText(%addr(procVary) : 256);
+  stub.times = times;
 
-  if not readMatchers(%addr(args) : m : nM : defs : nDefs : lbl : err);
+  if not unpackMatchers(%addr(args) : stub.m : stub.nM : err);
     return;
   endif;
 
   // RETURN values
   p = %addr(rtns);
-  nRtn = lstCount(p);
-  if nRtn > 32;
+  stub.nRtn = lstCount(p);
+  if stub.nRtn > %elem(stub.rtn);
     setErr(err : 'IMQ0014' : 'At most 32 RETURN values are allowed');
     return;
   endif;
-  for i = 1 to nRtn;
-    rtnVal(i) = varyText(p + 2 + (i - 1) * 258 : 256);
-  endfor;
-  if nRtn > 0 and not hasRtn;
-    setErr(err : 'IMQ0014' : lbl + ' has no declared return value. '
-         + 'Declare RTNTYPE with IMOQPROC');
-    return;
-  endif;
-  for i = 1 to nRtn;
-    if not canEncode(rtnDef : rtnVal(i) : m256);
-      setErr(err : 'IMQ0014' : 'RETURN value ' + %char(i) + ': ' + m256);
-      return;
-    endif;
+  for i = 1 to stub.nRtn;
+    stub.rtn(i) = varyText(p + 2 + (i - 1) * 258 : 256);
   endfor;
 
   // SETPARM values
   p = %addr(sets);
-  nSet = lstCount(p);
-  if nSet > IMOQ_MAXP;
+  stub.nSet = lstCount(p);
+  if stub.nSet > IMOQ_MAXP;
     setErr(err : 'IMQ0014' : 'At most 64 SETPARM entries are allowed');
     return;
   endif;
-  for i = 1 to nSet;
+  for i = 1 to stub.nSet;
     e = lstEntry(p : i);
-    setNo(i) = int2At(e + 2);
-    setVal(i) = varyText(e + 4 : 256);
-    if setNo(i) < 1 or setNo(i) > nDefs;
-      setErr(err : 'IMQ0014' : 'SETPARM entry ' + %char(i) + ': parameter '
-           + %char(setNo(i)) + ' of ' + lbl + ' is not declared');
-      return;
-    endif;
-    if defs(setNo(i)).passing = '*VALUE';
-      setErr(err : 'IMQ0014' : 'SETPARM entry ' + %char(i) + ': parameter '
-           + %char(setNo(i)) + ' is passed by value and cannot be set');
-      return;
-    endif;
-    if not canEncode(defs(setNo(i)) : setVal(i) : m256);
-      setErr(err : 'IMQ0014' : 'SETPARM entry ' + %char(i) + ': ' + m256);
-      return;
-    endif;
+    stub.setNo(i) = int2At(e + 2);
+    stub.setVal(i) = varyText(e + 4 : 256);
   endfor;
 
   // THROW
   p = %addr(thr);
-  thrId = ' ';
-  thrMsgf = ' ';
-  thrLib = ' ';
-  thrDta = '';
   if lstCount(p) > 0;
-    thrId = %xlate(LOWER : UPPER : charAt(p + 2 : 7));
-    if thrId = '*NONE' or thrId = ' ';
-      thrId = ' ';
-    else;
-      thrMsgf = %xlate(LOWER : UPPER : charAt(p + 9 : 10));
-      thrLib = %xlate(LOWER : UPPER : charAt(p + 19 : 10));
-      thrDta = varyText(p + 29 : 256);
-      if thrId = '*MOCK';
-        thrId = 'IMQ0101';
-      endif;
-      if thrMsgf = '*MOCK' or thrMsgf = ' ';
-        thrMsgf = 'IMOQMSGF';
-        thrLib = psds.lib;
-      endif;
-      if thrLib = ' ';
-        thrLib = '*LIBL';
-      endif;
+    stub.thrId = charAt(p + 2 : 7);
+    stub.thrMsgf = charAt(p + 9 : 10);
+    stub.thrLib = charAt(p + 19 : 10);
+    stub.thrDta = varyText(p + 29 : 256);
+  endif;
+
+  imoq_stubSave(stub : err);
+end-proc;
+
+// ------------------------------------------------------------------
+// imoq_stubSave - validate a stub and save it. Used by IMOQWHEN and
+// by the RPG API (IMOQAPI), which saves again after every change.
+// ------------------------------------------------------------------
+dcl-proc imoq_stubSave export;
+  dcl-pi *n ind;
+    stub likeds(imoq_stub_t);
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-ds tgt likeds(target_t);
+  dcl-s i int(10);
+  dcl-s n int(10);
+  dcl-s id int(10);
+  dcl-s obj char(10);
+  dcl-s proc varchar(4096);
+  dcl-s times int(10);
+  dcl-s thrId char(7);
+  dcl-s thrMsgf char(10);
+  dcl-s thrLib char(10);
+  dcl-s thrDta varchar(512);
+  dcl-s nRtn int(10);
+  dcl-s seq int(10);
+  dcl-s parmNo int(5);
+  dcl-s mt char(10);
+  dcl-s v varchar(1024);
+  dcl-s m256 varchar(256);
+
+  clearErr(err);
+  ensureTables();
+  if not openTarget(stub.obj : stub.proc : tgt : err);
+    return *off;
+  endif;
+  stub.proc = tgt.proc;
+  if tgt.kind = 'DATA';
+    setErr(err : 'IMQ0012' : tgt.proc + ' is a data export and cannot be '
+         + 'stubbed');
+    return *off;
+  endif;
+
+  if not checkMatchers(stub.m : stub.nM : tgt : err);
+    return *off;
+  endif;
+
+  // RETURN values
+  if stub.nRtn > %elem(stub.rtn);
+    setErr(err : 'IMQ0014' : 'At most 32 RETURN values are allowed');
+    return *off;
+  endif;
+  if stub.nRtn > 0 and not tgt.hasRtn;
+    setErr(err : 'IMQ0014' : tgt.lbl + ' has no declared return value. '
+         + 'Declare RTNTYPE with IMOQPROC');
+    return *off;
+  endif;
+  for i = 1 to stub.nRtn;
+    if not canEncode(tgt.rtnDef : stub.rtn(i) : m256);
+      setErr(err : 'IMQ0014' : 'RETURN value ' + %char(i) + ': ' + m256);
+      return *off;
+    endif;
+  endfor;
+
+  // SETPARM values
+  if stub.nSet > IMOQ_MAXP;
+    setErr(err : 'IMQ0014' : 'At most 64 SETPARM entries are allowed');
+    return *off;
+  endif;
+  for i = 1 to stub.nSet;
+    if stub.setNo(i) < 1 or stub.setNo(i) > tgt.nDefs;
+      setErr(err : 'IMQ0014' : 'SETPARM entry ' + %char(i) + ': parameter '
+           + %char(stub.setNo(i)) + ' of ' + tgt.lbl + ' is not declared');
+      return *off;
+    endif;
+    if tgt.defs(stub.setNo(i)).passing = '*VALUE';
+      setErr(err : 'IMQ0014' : 'SETPARM entry ' + %char(i) + ': parameter '
+           + %char(stub.setNo(i)) + ' is passed by value and cannot be set');
+      return *off;
+    endif;
+    if not canEncode(tgt.defs(stub.setNo(i)) : stub.setVal(i) : m256);
+      setErr(err : 'IMQ0014' : 'SETPARM entry ' + %char(i) + ': ' + m256);
+      return *off;
+    endif;
+  endfor;
+
+  // THROW: fill in the defaults (saving again leaves them unchanged)
+  stub.thrId = %xlate(LOWER : UPPER : stub.thrId);
+  if stub.thrId = '*NONE' or stub.thrId = ' ';
+    stub.thrId = ' ';
+    stub.thrMsgf = ' ';
+    stub.thrLib = ' ';
+    stub.thrDta = '';
+  else;
+    stub.thrMsgf = %xlate(LOWER : UPPER : stub.thrMsgf);
+    stub.thrLib = %xlate(LOWER : UPPER : stub.thrLib);
+    if stub.thrId = '*MOCK';
+      stub.thrId = 'IMQ0101';
+    endif;
+    if stub.thrMsgf = '*MOCK' or stub.thrMsgf = ' ';
+      stub.thrMsgf = 'IMOQMSGF';
+      stub.thrLib = psds.lib;
+    endif;
+    if stub.thrLib = ' ';
+      stub.thrLib = '*LIBL';
     endif;
   endif;
 
-  if times < -1;
+  if stub.times < -1 or stub.times = 0;
     setErr(err : 'IMQ0014' : 'TIMES must be *ALWAYS or a positive number');
-    return;
+    return *off;
   endif;
 
-  exec sql select coalesce(max(stubid), 0) + 1 into :id
-             from qtemp.imoq_stub;
-  exec sql insert into qtemp.imoq_stub
-    values(:id, :obj, :proc, :times, 0, :thrId, :thrMsgf, :thrLib,
-           :thrDta, :nRtn);
-  if sqlcode < 0;
-    setErr(err : 'IMQ0015' : sqlFailText('Save stub'));
-    return;
+  // Save. Stub numbers are never reused within the job, so a handle
+  // to a stub that IMOQRESET removed can't point at a newer stub.
+  obj = stub.obj;
+  proc = stub.proc;
+  times = stub.times;
+  thrId = stub.thrId;
+  thrMsgf = stub.thrMsgf;
+  thrLib = stub.thrLib;
+  thrDta = stub.thrDta;
+  nRtn = stub.nRtn;
+  if stub.id = 0;
+    exec sql select coalesce(max(stubid), 0) into :id
+               from qtemp.imoq_stub;
+    if id < gLastStub;
+      id = gLastStub;
+    endif;
+    id += 1;
+    exec sql insert into qtemp.imoq_stub
+      values(:id, :obj, :proc, :times, 0, :thrId, :thrMsgf, :thrLib,
+             :thrDta, :nRtn);
+    if sqlcode < 0;
+      setErr(err : 'IMQ0015' : sqlFailText('Save stub'));
+      return *off;
+    endif;
+    gLastStub = id;
+    stub.id = id;
+  else;
+    id = stub.id;
+    exec sql select count(*) into :n from qtemp.imoq_stub
+              where stubid = :id and obj = :obj;
+    if n = 0;
+      setErr(err : 'IMQ0014' : 'Stub ' + %char(id) + ' of ' + tgt.lbl
+           + ' no longer exists. IMOQRESET removed it');
+      return *off;
+    endif;
+    // calls already answered count against a new TIMES
+    exec sql update qtemp.imoq_stub
+                set proc = :proc,
+                    timesleft = case when :times < 0 then -1
+                                     when :times > used then :times - used
+                                     else 0 end,
+                    thrid = :thrId, thrmsgf = :thrMsgf, thrlib = :thrLib,
+                    thrdta = :thrDta, rtncnt = :nRtn
+              where stubid = :id;
+    if sqlcode < 0;
+      setErr(err : 'IMQ0015' : sqlFailText('Save stub'));
+      return *off;
+    endif;
+    exec sql delete from qtemp.imoq_sarg where stubid = :id;
+    exec sql delete from qtemp.imoq_srtn where stubid = :id;
+    exec sql delete from qtemp.imoq_sset where stubid = :id;
   endif;
-  for i = 1 to nM;
-    parmNo = m(i).parmNo;
-    mt = m(i).matcher;
-    v = m(i).val;
+
+  for i = 1 to stub.nM;
+    parmNo = stub.m(i).parmNo;
+    mt = stub.m(i).matcher;
+    v = stub.m(i).val;
     exec sql insert into qtemp.imoq_sarg values(:id, :parmNo, :mt, :v);
   endfor;
-  for i = 1 to nRtn;
+  for i = 1 to stub.nRtn;
     seq = i;
-    v = rtnVal(i);
+    v = stub.rtn(i);
     exec sql insert into qtemp.imoq_srtn values(:id, :seq, :v);
   endfor;
-  for i = 1 to nSet;
-    parmNo = setNo(i);
-    v = setVal(i);
+  for i = 1 to stub.nSet;
+    parmNo = stub.setNo(i);
+    v = stub.setVal(i);
     exec sql insert into qtemp.imoq_sset values(:id, :parmNo, :v);
   endfor;
+  return *on;
+end-proc;
+
+// ------------------------------------------------------------------
+// imoq_stubLoad - read a saved stub back (for the RPG API handles)
+// ------------------------------------------------------------------
+dcl-proc imoq_stubLoad export;
+  dcl-pi *n ind;
+    id int(10) const;
+    stub likeds(imoq_stub_t);
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-s obj char(10);
+  dcl-s proc varchar(4096);
+  dcl-s left int(10);
+  dcl-s used int(10);
+  dcl-s thrId char(7);
+  dcl-s thrMsgf char(10);
+  dcl-s thrLib char(10);
+  dcl-s thrDta varchar(512);
+  dcl-s parmNo int(5);
+  dcl-s mt char(10);
+  dcl-s v varchar(1024);
+
+  clearErr(err);
+  ensureTables();
+  clear stub;
+  exec sql select obj, proc, timesleft, used, thrid, thrmsgf, thrlib,
+                  thrdta
+             into :obj, :proc, :left, :used, :thrId, :thrMsgf, :thrLib,
+                  :thrDta
+             from qtemp.imoq_stub where stubid = :id;
+  if sqlcode <> 0;
+    setErr(err : 'IMQ0014' : 'Stub ' + %char(id) + ' no longer exists. '
+         + 'IMOQRESET removed it');
+    return *off;
+  endif;
+  stub.id = id;
+  stub.obj = obj;
+  stub.proc = proc;
+  if left < 0;
+    stub.times = -1;
+  else;
+    stub.times = left + used;
+  endif;
+  stub.thrId = thrId;
+  stub.thrMsgf = thrMsgf;
+  stub.thrLib = thrLib;
+  stub.thrDta = thrDta;
+
+  exec sql declare cLdArg cursor for
+    select parmno, matcher, val from qtemp.imoq_sarg
+     where stubid = :id order by parmno;
+  exec sql open cLdArg;
+  dow sqlcode = 0 and stub.nM < IMOQ_MAXP;
+    exec sql fetch next from cLdArg into :parmNo, :mt, :v;
+    if sqlcode <> 0;
+      leave;
+    endif;
+    stub.nM += 1;
+    stub.m(stub.nM).parmNo = parmNo;
+    stub.m(stub.nM).matcher = mt;
+    stub.m(stub.nM).val = v;
+  enddo;
+  exec sql close cLdArg;
+
+  exec sql declare cLdRtn cursor for
+    select val from qtemp.imoq_srtn where stubid = :id order by seq;
+  exec sql open cLdRtn;
+  dow sqlcode = 0 and stub.nRtn < %elem(stub.rtn);
+    exec sql fetch next from cLdRtn into :v;
+    if sqlcode <> 0;
+      leave;
+    endif;
+    stub.nRtn += 1;
+    stub.rtn(stub.nRtn) = v;
+  enddo;
+  exec sql close cLdRtn;
+
+  exec sql declare cLdSet cursor for
+    select parmno, val from qtemp.imoq_sset
+     where stubid = :id order by parmno;
+  exec sql open cLdSet;
+  dow sqlcode = 0 and stub.nSet < IMOQ_MAXP;
+    exec sql fetch next from cLdSet into :parmNo, :v;
+    if sqlcode <> 0;
+      leave;
+    endif;
+    stub.nSet += 1;
+    stub.setNo(stub.nSet) = parmNo;
+    stub.setVal(stub.nSet) = v;
+  enddo;
+  exec sql close cLdSet;
+  return *on;
 end-proc;
 
 // IMOQVERIFY --------------------------------------------------------
@@ -1201,56 +1430,72 @@ dcl-proc imoq_cl_verify export;
     timesBlob char(1) options(*varsize);
     err likeds(imoq_err_t);
   end-pi;
-  dcl-s objType char(7);
-  dcl-s behavior char(7);
-  dcl-s built char(1);
-  dcl-s realLib char(10);
-  dcl-s proc varchar(4096);
-  dcl-s kind char(4);
-  dcl-s declared char(1);
-  dcl-ds defs likeds(imoq_def_t) dim(64);
-  dcl-ds rtnDef likeds(imoq_def_t);
-  dcl-s hasRtn ind;
-  dcl-s nDefs int(10);
-  dcl-ds m likeds(matcher_t) dim(64);
+  dcl-ds m likeds(imoq_matcher_t) dim(64);
   dcl-s nM int(10);
+  dcl-s mode char(9);
+  dcl-s want int(10);
+  dcl-s cnt int(10);
+  dcl-s p pointer;
+
+  clearErr(err);
+  if not unpackMatchers(%addr(args) : m : nM : err);
+    return;
+  endif;
+  p = %addr(timesBlob);
+  mode = '*EXACTLY';
+  want = 1;
+  if lstCount(p) > 0;
+    mode = charAt(p + 2 : 9);
+    want = int4At(p + 11);
+  endif;
+  imoq_verifyCalls(obj : varyText(%addr(procVary) : 256) : m : nM
+                   : mode : want : cnt : err);
+end-proc;
+
+// ------------------------------------------------------------------
+// imoq_verifyCalls - count the recorded calls that match, and check
+// the count unless mode is *COUNT. Used by IMOQVERIFY, IMOQCOUNT and
+// the RPG API. Returns *off on an error or a failed verification.
+// ------------------------------------------------------------------
+dcl-proc imoq_verifyCalls export;
+  dcl-pi *n ind;
+    obj char(10) const;
+    procIn varchar(4096) const;
+    mIn likeds(imoq_matcher_t) dim(64) const;
+    nM int(10) const;
+    modeIn char(9) const;
+    wantIn int(10) const;
+    count int(10);
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-ds tgt likeds(target_t);
+  dcl-ds m likeds(imoq_matcher_t) dim(64);
   dcl-s ids int(10) dim(5000);
   dcl-s hit ind dim(5000);
   dcl-s nIds int(10);
   dcl-s mode char(9);
   dcl-s want int(10);
-  dcl-s cnt int(10);
   dcl-s ok ind;
   dcl-s i int(10);
   dcl-s id int(10);
-  dcl-s p pointer;
-  dcl-s lbl varchar(4200);
   dcl-s modeText varchar(40);
   dcl-s txt varchar(2000);
 
   clearErr(err);
   ensureTables();
-  if not objInfo(obj : objType : behavior : built : realLib);
-    setErr(err : 'IMQ0011' : 'Mock ' + %trim(obj) + ' does not exist');
-    return;
+  count = 0;
+  if not openTarget(obj : procIn : tgt : err);
+    return *off;
   endif;
-  if not resolveProc(obj : objType : varyText(%addr(procVary) : 256)
-                     : proc : kind : declared : err);
-    return;
-  endif;
-  lbl = label(obj : proc);
-  loadSig(obj : proc : defs : nDefs : rtnDef : hasRtn);
-  if not readMatchers(%addr(args) : m : nM : defs : nDefs : lbl : err);
-    return;
+  for i = 1 to nM;
+    m(i) = mIn(i);
+  endfor;
+  if not checkMatchers(m : nM : tgt : err);
+    return *off;
   endif;
 
-  p = %addr(timesBlob);
-  mode = '*EXACTLY';
-  want = 1;
-  if lstCount(p) > 0;
-    mode = %xlate(LOWER : UPPER : charAt(p + 2 : 9));
-    want = int4At(p + 11);
-  endif;
+  mode = %xlate(LOWER : UPPER : modeIn);
+  want = wantIn;
   if mode = '*ONCE';
     mode = '*EXACTLY';
     want = 1;
@@ -1260,26 +1505,28 @@ dcl-proc imoq_cl_verify export;
   endif;
   if want < 0;
     setErr(err : 'IMQ0014' : 'TIMES count cannot be negative');
-    return;
+    return *off;
   endif;
 
-  nIds = loadCallIds(obj : proc : ids);
+  nIds = loadCallIds(obj : tgt.proc : ids);
   for i = 1 to nIds;
-    hit(i) = callMatches(ids(i) : m : nM : defs : nDefs);
+    hit(i) = callMatches(ids(i) : m : nM : tgt.defs : tgt.nDefs);
     if hit(i);
-      cnt += 1;
+      count += 1;
     endif;
   endfor;
 
   select;
+  when mode = '*COUNT';
+    return *on;
   when mode = '*ATLEAST';
-    ok = cnt >= want;
+    ok = count >= want;
     modeText = 'at least ' + %char(want) + ' time(s)';
   when mode = '*ATMOST';
-    ok = cnt <= want;
+    ok = count <= want;
     modeText = 'at most ' + %char(want) + ' time(s)';
   other;
-    ok = cnt = want;
+    ok = count = want;
     modeText = 'exactly ' + %char(want) + ' time(s)';
   endsl;
 
@@ -1291,12 +1538,12 @@ dcl-proc imoq_cl_verify export;
                   where callid = :id;
       endif;
     endfor;
-    return;
+    return *on;
   endif;
 
-  txt = 'Verification failed: expected ' + lbl + ' to be called '
+  txt = 'Verification failed: expected ' + tgt.lbl + ' to be called '
       + modeText + ' with ' + describeMatchers(m : nM)
-      + ' but it matched ' + %char(cnt) + ' time(s). Recorded calls: ';
+      + ' but it matched ' + %char(count) + ' time(s). Recorded calls: ';
   if nIds = 0;
     txt += 'none';
   endif;
@@ -1314,6 +1561,7 @@ dcl-proc imoq_cl_verify export;
     txt = %subst(txt : 1 : 509) + '...';
   endif;
   setErr(err : 'IMQ0200' : txt);
+  return *off;
 end-proc;
 
 // IMOQNOMORE --------------------------------------------------------
@@ -1357,7 +1605,7 @@ dcl-proc imoq_cl_noMore export;
 end-proc;
 
 // IMOQGETARG --------------------------------------------------------
-dcl-proc getArg;
+dcl-proc imoq_getArg export;
   dcl-pi *n ind;
     obj char(10) const;
     procIn varchar(4096) const;
@@ -1446,7 +1694,7 @@ dcl-proc imoq_cl_getArg export;
   clearErr(err);
   ensureTables();
   rtn = ' ';
-  if getArg(obj : varyText(%addr(procVary) : 256) : callNo : parmNo
+  if imoq_getArg(obj : varyText(%addr(procVary) : 256) : callNo : parmNo
             : v : err);
     rtn = v;
   endif;
@@ -1461,45 +1709,19 @@ dcl-proc imoq_cl_count export;
     count packed(10:0);
     err likeds(imoq_err_t);
   end-pi;
-  dcl-s objType char(7);
-  dcl-s behavior char(7);
-  dcl-s built char(1);
-  dcl-s realLib char(10);
-  dcl-s proc varchar(4096);
-  dcl-s kind char(4);
-  dcl-s declared char(1);
-  dcl-ds defs likeds(imoq_def_t) dim(64);
-  dcl-ds rtnDef likeds(imoq_def_t);
-  dcl-s hasRtn ind;
-  dcl-s nDefs int(10);
-  dcl-ds m likeds(matcher_t) dim(64);
+  dcl-ds m likeds(imoq_matcher_t) dim(64);
   dcl-s nM int(10);
-  dcl-s ids int(10) dim(5000);
-  dcl-s nIds int(10);
-  dcl-s i int(10);
+  dcl-s cnt int(10);
 
   clearErr(err);
-  ensureTables();
   count = 0;
-  if not objInfo(obj : objType : behavior : built : realLib);
-    setErr(err : 'IMQ0011' : 'Mock ' + %trim(obj) + ' does not exist');
+  if not unpackMatchers(%addr(args) : m : nM : err);
     return;
   endif;
-  if not resolveProc(obj : objType : varyText(%addr(procVary) : 256)
-                     : proc : kind : declared : err);
-    return;
+  if imoq_verifyCalls(obj : varyText(%addr(procVary) : 256) : m : nM
+                      : '*COUNT' : 0 : cnt : err);
+    count = cnt;
   endif;
-  loadSig(obj : proc : defs : nDefs : rtnDef : hasRtn);
-  if not readMatchers(%addr(args) : m : nM : defs : nDefs
-                      : label(obj : proc) : err);
-    return;
-  endif;
-  nIds = loadCallIds(obj : proc : ids);
-  for i = 1 to nIds;
-    if callMatches(ids(i) : m : nM : defs : nDefs);
-      count += 1;
-    endif;
-  endfor;
 end-proc;
 
 // IMOQRESET ---------------------------------------------------------
@@ -2004,7 +2226,7 @@ dcl-proc imoq_arg export;
   dcl-s v varchar(1024);
   clearErr(err);
   ensureTables();
-  if not getArg(obj : proc : callNo : parmNo : v : err);
+  if not imoq_getArg(obj : proc : callNo : parmNo : v : err);
     return '*ERROR ' + %trimr(err.text);
   endif;
   return v;
@@ -2032,4 +2254,49 @@ dcl-proc imoq_count export;
     return -1;
   endif;
   return countCalls(obj : p);
+end-proc;
+
+// ==================================================================
+// Engine core for the RPG API (IMOQAPI)
+// ==================================================================
+dcl-proc imoq_resolveTarget export;
+  dcl-pi *n ind;
+    obj char(10) const;
+    procIn varchar(4096) const;
+    procOut varchar(4096);
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-ds tgt likeds(target_t);
+  clearErr(err);
+  ensureTables();
+  procOut = '';
+  if not openTarget(obj : procIn : tgt : err);
+    return *off;
+  endif;
+  procOut = tgt.proc;
+  return *on;
+end-proc;
+
+dcl-proc imoq_checkMatcher export;
+  dcl-pi *n ind;
+    obj char(10) const;
+    proc varchar(4096) const;
+    m likeds(imoq_matcher_t);
+    what varchar(40) const;
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-ds tgt likeds(target_t);
+  clearErr(err);
+  ensureTables();
+  if not openTarget(obj : proc : tgt : err);
+    return *off;
+  endif;
+  return checkMatcher(m : what : tgt : err);
+end-proc;
+
+dcl-proc imoq_setLastError export;
+  dcl-pi *n;
+    text varchar(512) const;
+  end-pi;
+  gLastErr = text;
 end-proc;

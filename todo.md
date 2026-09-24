@@ -26,8 +26,6 @@ Work still to do on iMoq, from a review of its features and gaps
 - [ ] **More parameter types.** Arrays (`DIM`), data structures as return
       values, `*VARCHAR` passed `*VALUE`, and captured arguments longer than
       1,024 characters.
-- [ ] **Typed RPG helpers.** Procedures such as `imoq_when(...)` so RPG tests
-      don't have to build command strings with doubled quotes.
 - [ ] **Detect qualified calls.** Have `IMOQCHK` report code that calls a mocked
       program with a qualified name (`CALL MYLIB/X`, `EXTPGM('MYLIB/X')`), which
       bypasses the mock.

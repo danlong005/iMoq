@@ -1,0 +1,49 @@
+/* ---------------------------------------------------------------- */
+/* EXAPI - Everything the RPG API can do                            */
+/*                                                                  */
+/* Driver for test program EXAPI_T. Needs IBM i 7.4 TR5 or later.   */
+/*   CRTBNDCL PGM(IMOQ/EXAPI) SRCFILE(IMOQ/QCLLESRC)                */
+/*   CALL IMOQ/EXAPI PARM('IMOQ')                                   */
+/* ---------------------------------------------------------------- */
+             PGM        PARM(&LIB)
+             DCL        VAR(&LIB) TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSG) TYPE(*CHAR) LEN(512)
+
+/* iMoq and the example source are in &LIB                          */
+             CHGCURLIB  CURLIB(&LIB)
+
+/* 1. Create the mocks                                              */
+             IMOQPGM    OBJ(EXCUST) PARMS((*CHAR 5) (*CHAR 30) (*IND))
+             IMOQSRVPGM OBJ(EXPRICE)
+             IMOQPROC   OBJ(EXPRICE) PROC(EX_PRICE) +
+                          RTNTYPE(*PACKED 7 2) PARMS((*CHAR 5 *CONST))
+             IMOQPROC   OBJ(EXPRICE) PROC(EX_DISCOUNT) +
+                          RTNTYPE(*PACKED 7 2) +
+                          PARMS((*PACKED 7 2 *CONST) (*CHAR 10 *CONST))
+             IMOQPROC   OBJ(EXPRICE) PROC(EX_SCHEDULE) +
+                          RTNTYPE(*TIMESTAMP) +
+                          PARMS((*CHAR 5 *CONST) (*TIME) (*TIMESTAMP) +
+                          (*IND) (*PACKED 7 2) (*DATE))
+             IMOQPROC   OBJ(EXPRICE) PROC(EX_CUTOFF) RTNTYPE(*TIME) +
+                          PARMS((*CHAR 5 *CONST))
+             IMOQBUILD  OBJ(EXPRICE)
+
+/* 2. Compile the test program                                      */
+             CRTRPGMOD  MODULE(QTEMP/EXAPI_T) SRCFILE(&LIB/QRPGLESRC)
+             CRTPGM     PGM(QTEMP/EXAPI_T) MODULE(QTEMP/EXAPI_T) +
+                          BNDSRVPGM((*LIBL/EXPRICE) (*LIBL/IMOQENG)) +
+                          ACTGRP(*NEW)
+
+/* 3. Run it. A failed expect() arrives as escape message CPF9898.  */
+             CALL       PGM(QTEMP/EXAPI_T)
+             MONMSG     MSGID(CPF9898) EXEC(DO)
+             RCVMSG     MSGTYPE(*EXCP) MSG(&MSG)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) MSGDTA('EXAPI +
+                          failed:' *BCAT &MSG) MSGTYPE(*ESCAPE)
+             ENDDO
+
+/* 4. Remove the mocks                                              */
+             IMOQRMV
+             SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('EXAPI +
+                          passed') MSGTYPE(*COMP)
+             ENDPGM

@@ -9,8 +9,8 @@ iMoq gives your CL test driver commands that put stand-in objects in QTEMP. The 
 | | |
 |---|---|
 | Commands and engine | `IMOQ*` commands, service program `IMOQENG` |
-| Copybook for RPG tests | `IMOQ_H` |
-| Requires | IBM i 7.4 or later |
+| Copybooks for RPG tests | `IMOQ_H` (RPG API), `IMOQRU_H` (RPGUnit assertions) |
+| Requires | IBM i 7.4 or later; the RPG API's typed calls need 7.4 TR5 or later |
 | Examples | [One short example per feature](EXAMPLES.md) |
 | Project | [imoq on GitHub](../README.md) |
 
@@ -110,7 +110,7 @@ iMoq needs IBM i 7.4 or later; it was built and tested on 7.5. It doesn't need R
 | `IMOQENG` `*SRVPGM` (activation group `IMOQ`) | Engine: stub runtime, matchers, verification, source generation |
 | `IMOQMSGF` `*MSGF` | `IMQnnnn` messages |
 
-To use iMoq, a test driver needs the library in its library list (anywhere; it holds nothing that gets mocked), and test programs bind service program `IMOQENG`. Copy `IMOQ_H` from its `QRPGLESRC` into your tests.
+To use iMoq, a test driver needs the library in its library list (anywhere; it holds nothing that gets mocked), and test programs bind service program `IMOQENG`. Copy `IMOQ_H` from its `QRPGLESRC` into your tests, and `IMOQRU_H` too if you want the RPGUnit assertions.
 
 ### Rebuild after changing the source
 
@@ -251,27 +251,36 @@ ctl-opt nomain;
 /copy MYLIB/QRPGLESRC,ORDERSRV_H
 
 dcl-proc SETUP export;
-  imoq('IMOQRESET');                 // no stubs or calls left from earlier tests
+  imoq_reset();                      // no stubs or calls left from earlier tests
 end-proc;
 
 dcl-proc test_total_adds_tax_for_known_customer export;
   dcl-s name char(50);
+  dcl-s h int(10);
+  dcl-s v int(10);
 
   // arrange
-  imoq('IMOQWHEN OBJ(CUSTLKUP) ARGS((1 *EQ C001)) +
-        SETPARM((2 ''ACME CORP'') (3 ''1''))');
-  imoq('IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) RETURN(''6.00'')');
+  h = imoq_when('CUSTLKUP');
+  imoq_with(h : 1 : IMOQ_EQ : 'C001');
+  imoq_setParm(h : 2 : 'ACME CORP');
+  imoq_setParm(h : 3 : '1');
+
+  h = imoq_when('TAXSRV' : 'CALCTAX');
+  imoq_returns(h : 6.00);
 
   // act + assert
   aEqual('106.00' : %char(order_total('C001' : 100 : 'PA' : name)));
   aEqual('ACME CORP' : name);
 
   // verify
-  assert(imoq_ok('IMOQVERIFY OBJ(TAXSRV) PROC(CALCTAX) +
-                  ARGS((1 *EQ 100) (2 *EQ PA)) TIMES(*ONCE)')
-         : imoq_lastError());
+  v = imoq_verify('TAXSRV' : 'CALCTAX');
+  imoq_with(v : 1 : IMOQ_EQ : 100);
+  imoq_with(v : 2 : IMOQ_EQ : 'PA');
+  assert(imoq_calledOnce(v) : imoq_lastError());
 end-proc;
 ```
+
+Each `imoq_…` call takes RPG values, so there are no command strings to build. The same test can also run the `IMOQWHEN` and `IMOQVERIFY` commands through `imoq()`; see [Writing tests in RPG](#8-writing-tests-in-rpg).
 
 ### Step 5: Run the driver and read the result
 
@@ -325,7 +334,7 @@ iMoq doesn't read prototypes. You describe each parameter as `(type length decim
 
 ## 6. Stubbing recipes
 
-Every recipe is a `IMOQWHEN` command. From RPG, wrap it in `imoq('…')` and double the quotes. From CL, write it as shown.
+Every recipe is an `IMOQWHEN` command, written here as you'd write it in CL. From RPG, build the same stub with the [RPG API](#8-writing-tests-in-rpg): each keyword has a matching call, such as `ARGS` → `imoq_with` and `RETURN` → `imoq_returns`.
 
 Values are checked against the declared layout when `IMOQWHEN` runs, so a mistake such as `RETURN('12345678901.99')` for `*PACKED 11 2` fails right away with **IMQ0014** instead of at call time.
 
@@ -431,6 +440,7 @@ From an RPG test:
 
 ```rpgle
 aEqual('25.50' : imoq_arg('TAXSRV' : 'CALCTAX' : IMOQ_LAST : 1));
+assert(imoq_argNum('TAXSRV' : 'CALCTAX' : IMOQ_LAST : 1) = 25.5);
 iEqual(2 : imoq_count('CUSTLKUP' : IMOQ_PGM));
 ```
 
@@ -451,15 +461,91 @@ Captured values are text: numbers are normalized (`25.50`, `-1`), trailing blank
 
 ## 8. Writing tests in RPG
 
-Copy `IMOQ_H` into the test module and bind service program `IMOQENG`. For a complete working example, see `examples/QRPGLESRC/DEMOCUT_T.rpgle` (driven by `examples/QCLLESRC/IMOQDEMO.clle`). Every MOCK command runs through one of two wrappers:
+Copy `IMOQ_H` into the test module and bind service program `IMOQENG`. For a complete working example, see `examples/QRPGLESRC/DEMOCUT_T.rpgle` (driven by `examples/QCLLESRC/IMOQDEMO.clle`), and [EXAPI](EXAMPLES.md#exapi-everything-the-rpg-api-can-do) for every procedure, one topic at a time.
+
+RPG tests stub and verify through **handles**. `imoq_when` and `imoq_verify` return a handle, and each later call adds one piece to it. Values are ordinary RPG values: numbers, dates, times and timestamps are passed as they are, and text needs no doubled quotes. `imoq_with`, `imoq_returns` and `imoq_setParm` use `OVERLOAD`, which needs **IBM i 7.4 TR5 or later**.
+
+```rpgle
+// stub: when TAXSRV.CALCTAX gets 100 and 'PA', return 6.00
+h = imoq_when('TAXSRV' : 'CALCTAX');
+imoq_with(h : 1 : IMOQ_EQ : 100);
+imoq_with(h : 2 : IMOQ_EQ : 'PA');
+imoq_returns(h : 6.00);
+
+// verify: CUSTLKUP was called once with 'C001'
+v = imoq_verify('CUSTLKUP');
+imoq_with(v : 1 : IMOQ_EQ : 'C001');
+assert(imoq_calledOnce(v) : imoq_lastError());
+```
+
+### Stubbing
+
+| Procedure | What it does | Command equivalent |
+|---|---|---|
+| `h = imoq_when(obj : proc)` | Starts a stub and returns its handle. Omit `proc` for a program mock. The stub answers calls straight away | `IMOQWHEN OBJ PROC` |
+| `imoq_with(h : parmNo : matcher : value)` | Adds an argument matcher. `IMOQ_ANY`, `IMOQ_BLANK`, `IMOQ_OMIT` and `IMOQ_NOTPASSED` take no value | `ARGS((n matcher value))` |
+| `imoq_returns(h : value)` | Adds a return value. Call it again for a series: one value per call, and the last one repeats | `RETURN(v …)` |
+| `imoq_setParm(h : parmNo : value)` | Fills an output parameter | `SETPARM((n value))` |
+| `imoq_throws(h : msgId : msgDta : msgf : msgfLib)` | Sends an escape message instead of answering. `msgId` `IMOQ_MOCK` sends **IMQ0101**; for another message ID, pass its message file (`msgfLib` defaults to `*LIBL`) | `THROW(…)` |
+| `imoq_times(h : n)` | Answers only `n` calls (default `IMOQ_ALWAYS`) | `TIMES(n)` |
+
+Matcher constants are `IMOQ_EQ`, `IMOQ_NE`, `IMOQ_GT`, `IMOQ_GE`, `IMOQ_LT`, `IMOQ_LE`, `IMOQ_LIKE`, `IMOQ_BLANK`, `IMOQ_ANY`, `IMOQ_OMIT` and `IMOQ_NOTPASSED`. They work exactly like the command matchers in [Stubbing recipes](#6-stubbing-recipes).
+
+Every call checks its piece against the declared layout and saves the stub again. When a call fails, the stub keeps its earlier pieces and keeps answering.
+
+### Verifying
+
+| Procedure | Returns | Command equivalent |
+|---|---|---|
+| `v = imoq_verify(obj : proc)` | A verification handle. Add matchers with `imoq_with(v : …)` | – |
+| `imoq_calledOnce(v)` / `imoq_neverCalled(v)` | `*on` if the count is right | `IMOQVERIFY TIMES(*ONCE)` / `TIMES(*NEVER)` |
+| `imoq_calledTimes(v : n)` · `imoq_calledAtLeast(v : n)` · `imoq_calledAtMost(v : n)` | `*on` if the count is right | `TIMES(*EXACTLY n)` · `*ATLEAST` · `*ATMOST` |
+| `imoq_matchCount(v)` | The number of matching calls. Unlike the checks, it doesn't mark them verified | `IMOQCOUNT` |
+| `imoq_noMoreCalls(obj)` | `*on` if every recorded call (to `obj`, or to any mock) was verified | `IMOQNOMORE` |
+| `imoq_reset(obj : scope)` | Forgets stubs and recorded calls. Both parameters are optional; scope is `IMOQ_ALL`, `IMOQ_CALLS` or `IMOQ_STUBS` | `IMOQRESET` |
+
+A successful check marks the calls it matched as verified, as `IMOQVERIFY` does. A verification handle stays usable until 16 newer `imoq_verify` calls have been made.
+
+### Capturing arguments
+
+| Procedure | Returns |
+|---|---|
+| `imoq_arg(obj : proc : call : parm)` | The argument as text; `*OMIT` or `*NOTPASSED` for missing ones |
+| `imoq_argNum` · `imoq_argDate` · `imoq_argTime` · `imoq_argTimestamp` · `imoq_argInd` | The argument as a `packed(31:9)`, date, time, timestamp or indicator |
+| `imoq_argPassed(obj : proc : call : parm)` | `*off` if the argument was `*OMIT` or not passed |
+| `imoq_count(obj : proc)` | The number of recorded calls, or `-1` if the mock or procedure is unknown |
+
+`call` is 1 for the first call or `IMOQ_LAST` for the most recent one. `proc` is `IMOQ_PGM` for program mocks.
+
+### When something goes wrong
+
+- **Setup calls** (`imoq_when`, `imoq_with`, `imoq_returns`, `imoq_setParm`, `imoq_throws`, `imoq_times`, `imoq_verify`, `imoq_reset` and the typed `imoq_arg…` procedures) send escape message **IMQ0300** with the reason. RPGUnit reports the test as an error. That includes using a stub handle after `imoq_reset` removed the stub.
+- **Checks** (`imoq_called…`, `imoq_neverCalled`, `imoq_noMoreCalls`) return `*off`. `imoq_lastError()` explains why, so pass it to `assert`.
+
+### RPGUnit assertions
+
+`IMOQRU_H` wraps the checks in RPGUnit's `assert`. Copy it after `IMOQ_H`, RPGUnit's `TESTCASE` copybook and the module's own global declarations:
+
+```rpgle
+/copy MYLIB/QRPGLESRC,IMOQRU_H
+…
+v = imoq_verify('TAXSRV' : 'CALCTAX');
+imoq_with(v : 2 : IMOQ_EQ : 'PA');
+imoq_assertCalledOnce(v);
+imoq_assertNoMoreCalls();
+```
+
+It provides `imoq_assertCalledOnce`, `imoq_assertCalledTimes`, `imoq_assertCalledAtLeast`, `imoq_assertCalledAtMost`, `imoq_assertNeverCalled` and `imoq_assertNoMoreCalls`.
+
+### Running commands directly
+
+Any `IMOQ*` command also runs from RPG, which works on every supported release:
 
 | Procedure | On failure | Use it for |
 |---|---|---|
 | `imoq(cmd)` | Sends escape **IMQ0300**; RPGUnit reports the test as an error | Setup: `IMOQWHEN`, `IMOQRESET` |
 | `imoq_ok(cmd)` | Returns `*off` | Assertions: `assert(imoq_ok('IMOQVERIFY …') : imoq_lastError())` |
 | `imoq_lastError()` | n/a | The message behind the last failure, including strict-mode calls |
-| `imoq_arg(obj : proc : call : parm)` | Returns `*ERROR …` | Argument capture (`IMOQ_LAST` for the last call) |
-| `imoq_count(obj : proc)` | Returns `-1` | Call counts (`IMOQ_PGM` as the procedure for program mocks) |
 
 ### Quoting inside RPG strings
 
@@ -467,7 +553,7 @@ Copy `IMOQ_H` into the test module and bind service program `IMOQENG`. For a com
 - Split long commands with `+` at the end of the line. Leading blanks on the next line are skipped, so leave the space before the `+`.
 - Lists of entries use two sets of parentheses: `ARGS((1 *EQ C001) (2 *ANY))`. Single groups use one: `THROW(CPF9898 QCPFMSG *LIBL ''text'')`. If `imoq_lastError()` starts with `CPF0006` (errors in command), check the quotes and parentheses; running the same command from a command line shows the exact problem.
 
-> **Tip: stub from CL or from RPG.** The commands work the same in both. Creating mocks belongs in CL (it compiles objects). Stubbing and verification usually belong in the test procedure, next to the assertion they support.
+> **Tip: create mocks in CL, stub in RPG.** Creating mocks belongs in the CL driver (it compiles objects). Stubbing and verification usually belong in the test procedure, next to the assertion they support.
 
 ---
 
@@ -509,7 +595,7 @@ IMOQPGM    OBJ(CUSTLKUP) PARMS((*CHAR 10) (*CHAR 50) (*IND)) LIB(TESTLIB)
 | Stubbed values never show up | The matcher doesn't match what was actually passed | Inspect with `imoq_arg`, or read the recorded calls in the `IMOQVERIFY` message |
 | Return value is always zero or blank | No stub matched a `*LOOSE` mock, or the export has no `IMOQPROC` | Declare `RTNTYPE`; use `*STRICT` to catch unmatched calls |
 | Signature violation when activating the code under test | It was bound before `IMOQBUILD` (or against another version), so its signature doesn't match the mock | Bind the code under test after `IMOQBUILD`, or create the mock with `SRCFILE(*RTV)` to copy the real object's signatures |
-| `imoq()` fails with CPF0006 | Command syntax: quotes or parentheses | See [Quoting inside RPG strings](#quoting-inside-rpg-strings) |
+| `imoq()` fails with CPF0006 | Command syntax: quotes or parentheses | See [Quoting inside RPG strings](#quoting-inside-rpg-strings), or use the RPG API, which needs no quoting |
 | Job waits on an inquiry message | An unmonitored error in a driver run over SSH | Start drivers with `CHGJOB INQMSGRPY(*DFT)` and a program-level `MONMSG` |
 
 ### Messages
@@ -528,7 +614,7 @@ IMOQPGM    OBJ(CUSTLKUP) PARMS((*CHAR 10) (*CHAR 50) (*IND)) LIB(TESTLIB)
 | IMQ0101 | Sent by `THROW(*MOCK …)` |
 | IMQ0200 / IMQ0201 | Verification failed / unverified interactions |
 | IMQ0202 | `IMOQGETARG`: no call with that number |
-| IMQ0300 | A command run through `imoq()` failed; the text explains why |
+| IMQ0300 | A command run through `imoq()`, or an RPG API setup call, failed; the text explains why |
 
 ### Looking inside
 
@@ -570,7 +656,7 @@ To test that code, call it directly from the driver job.
 
 - **Data structures and arrays** are described as one `*CHAR` of their total size. Matchers, `SETPARM` and captured values then treat the whole thing as text, which only makes sense when every subfield or element is character. With packed, zoned or binary subfields, you can still count calls and use `*ANY`, `*OMIT` and `*NOTPASSED`.
 - **`*VARCHAR` passed `*VALUE`** isn't supported.
-- **Sizes:** up to 64 parameters, command values of at most 256 characters, and captured values cut at 1,024 characters. See [Limits](#limits) for the full list.
+- **Sizes:** up to 64 parameters, command values of at most 256 characters (1,024 through the RPG API), and captured values cut at 1,024 characters. See [Limits](#limits) for the full list.
 
 ### Not supported yet
 
@@ -604,9 +690,20 @@ The mock is identified by `OBJ(name)`. Service program mocks also take `PROC(exp
 | `IMOQRMV` | `OBJ(*ALL\|name)` | – |
 | `IMOQCHK` | `PGM(*NONE\|lib/name)` | – |
 
+From RPG, the same stubbing and verification is available as the [RPG API](#8-writing-tests-in-rpg):
+
+| RPG API | Command |
+|---|---|
+| `h = imoq_when(obj : proc)` · `imoq_with` · `imoq_returns` · `imoq_setParm` · `imoq_throws` · `imoq_times` | `IMOQWHEN` |
+| `v = imoq_verify(obj : proc)` · `imoq_with` · `imoq_calledOnce` / `imoq_calledTimes` / `imoq_calledAtLeast` / `imoq_calledAtMost` / `imoq_neverCalled` | `IMOQVERIFY` |
+| `imoq_matchCount(v)` · `imoq_count(obj : proc)` | `IMOQCOUNT` |
+| `imoq_noMoreCalls(obj)` | `IMOQNOMORE` |
+| `imoq_arg` · `imoq_argNum` / `Date` / `Time` / `Timestamp` / `Ind` · `imoq_argPassed` | `IMOQGETARG` |
+| `imoq_reset(obj : scope)` | `IMOQRESET` |
+
 ### Limits
 
-- Up to 64 parameters per program or procedure, 64 `ARGS`/`SETPARM` entries and 32 `RETURN` values. Command values are at most 256 characters.
+- Up to 64 parameters per program or procedure, 64 `ARGS`/`SETPARM` entries and 32 `RETURN` values. Command values are at most 256 characters; RPG API values up to 1,024.
 - Captured argument text is cut at 1,024 characters. Dates and times use ISO format.
 - `*VARCHAR` can't be passed `*VALUE`. A data export is mocked as `char(n)` storage of the real size.
 - Each stub call runs a few SQL statements against QTEMP. That's fast enough for unit tests, but mocks aren't meant for performance runs.

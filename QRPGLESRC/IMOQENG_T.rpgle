@@ -1,6 +1,7 @@
 **free
 // ------------------------------------------------------------------
-// IMOQENG_T - iMoq engine unit tests: codec, layouts, matchers.
+// IMOQENG_T - iMoq engine unit tests: codec, layouts, matchers,
+//             number text for the RPG API.
 // Run with IMOQTEST.
 // ------------------------------------------------------------------
 ctl-opt main(runTests) option(*srcstmt:*nodebugio) decprec(63);
@@ -22,6 +23,7 @@ dcl-proc runTests;
   test_encodeErrors();
   test_invalidPacked();
   test_matchers();
+  test_numText();
   tst_summary(failures);
 end-proc;
 
@@ -169,5 +171,23 @@ dcl-proc test_matchers;
   tst_check(imoq_match('*ANY' : '' : 'N' : '' : c) : 'any');
   tst_check(not imoq_match('*EQ' : 'x' : 'P' : 'abc' : n)
           : 'non-numeric compare is false');
+  tst_end();
+end-proc;
+
+dcl-proc test_numText;
+  tst_begin('RPG API numbers become codec text');
+  tst_eqChar('6' : imoq_numText(6) : 'whole number');
+  tst_eqChar('6.5' : imoq_numText(6.50) : 'trailing zeros dropped');
+  tst_eqChar('0.25' : imoq_numText(.25) : 'leading zero added');
+  tst_eqChar('-0.25' : imoq_numText(-.25) : 'negative fraction');
+  tst_eqChar('-100' : imoq_numText(-100) : 'negative whole number');
+  tst_eqChar('0' : imoq_numText(0) : 'zero');
+  tst_eqChar('0.000000001' : imoq_numText(.000000001) : 'nine decimals');
+  tst_eqChar('6.50' : rt('*PACKED' : 7 : 2 : imoq_numText(6.5))
+           : 'packed(7:2) accepts it');
+  tst_eqChar('-3' : rt('*INT' : 10 : 0 : imoq_numText(-3))
+           : 'int 10 accepts it');
+  tst_eqChar('0.25' : rt('*ZONED' : 5 : 2 : imoq_numText(.25))
+           : 'zoned(5:2) accepts it');
   tst_end();
 end-proc;

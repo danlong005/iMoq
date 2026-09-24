@@ -1,0 +1,68 @@
+**free
+// ------------------------------------------------------------------
+// IMOQRU_H - iMoq verification as RPGUnit assertions
+//
+// Optional. Copy it into an RPGUnit test module after IMOQ_H,
+// RPGUnit's TESTCASE copybook and the module's own global
+// declarations: it contains procedures, so it must come after all
+// global definitions. Each procedure calls RPGUnit's assert() with
+// the verification message, so a failure shows in RPGUnit's report.
+//
+//   v = imoq_verify('TAXSRV' : 'CALCTAX');
+//   imoq_with(v : 1 : IMOQ_EQ : 100);
+//   imoq_assertCalledOnce(v);
+// ------------------------------------------------------------------
+/if defined(IMOQRU_H)
+/eof
+/endif
+/define IMOQRU_H
+
+dcl-proc imoq_assertCalledOnce;
+  dcl-pi *n;
+    h int(10) const;
+  end-pi;
+  assert(imoq_calledOnce(h) : imoq_lastError());
+end-proc;
+
+dcl-proc imoq_assertCalledTimes;
+  dcl-pi *n;
+    h int(10) const;
+    n int(10) const;
+  end-pi;
+  assert(imoq_calledTimes(h : n) : imoq_lastError());
+end-proc;
+
+dcl-proc imoq_assertCalledAtLeast;
+  dcl-pi *n;
+    h int(10) const;
+    n int(10) const;
+  end-pi;
+  assert(imoq_calledAtLeast(h : n) : imoq_lastError());
+end-proc;
+
+dcl-proc imoq_assertCalledAtMost;
+  dcl-pi *n;
+    h int(10) const;
+    n int(10) const;
+  end-pi;
+  assert(imoq_calledAtMost(h : n) : imoq_lastError());
+end-proc;
+
+dcl-proc imoq_assertNeverCalled;
+  dcl-pi *n;
+    h int(10) const;
+  end-pi;
+  assert(imoq_neverCalled(h) : imoq_lastError());
+end-proc;
+
+// Every recorded call (to obj, or to any mock) was verified
+dcl-proc imoq_assertNoMoreCalls;
+  dcl-pi *n;
+    obj char(10) const options(*nopass);
+  end-pi;
+  if %parms() >= %parmnum(obj);
+    assert(imoq_noMoreCalls(obj) : imoq_lastError());
+  else;
+    assert(imoq_noMoreCalls() : imoq_lastError());
+  endif;
+end-proc;

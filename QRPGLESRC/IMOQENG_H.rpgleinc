@@ -34,6 +34,32 @@ dcl-ds imoq_throw_t qualified template;
   msgDta varchar(512);
 end-ds;
 
+// Argument matcher: ARGS((parmNo matcher value))
+dcl-ds imoq_matcher_t qualified template;
+  parmNo int(10);
+  matcher char(10);
+  val varchar(1024);
+end-ds;
+
+// A complete stub (IMOQWHEN), as saved by imoq_stubSave
+dcl-ds imoq_stub_t qualified template;
+  id int(10);
+  obj char(10);
+  proc varchar(4096);
+  nM int(10);
+  m likeds(imoq_matcher_t) dim(64);
+  nRtn int(10);
+  rtn varchar(1024) dim(32);
+  nSet int(10);
+  setNo int(10) dim(64);
+  setVal varchar(1024) dim(64);
+  thrId char(7);
+  thrMsgf char(10);
+  thrLib char(10);
+  thrDta varchar(512);
+  times int(10);
+end-ds;
+
 // ---- Stub entry point (called by generated stubs) ----------------
 dcl-pr imoq_invoke int(10) extproc('IMOQ_INVOKE');
   obj char(10) const;
@@ -99,6 +125,80 @@ dcl-pr imoq_readExports ind extproc('IMOQ_READEXPORTS');
   names varchar(4096) dim(2000);
   count int(10);
   msg varchar(512);
+end-pr;
+
+// ---- Engine core (IMOQENG), shared by the commands and IMOQAPI ---
+// Validate a stub and save it: id 0 adds a new stub and sets id,
+// an existing id replaces that stub's definition
+dcl-pr imoq_stubSave ind extproc('IMOQ_STUBSAVE');
+  stub likeds(imoq_stub_t);
+  err likeds(imoq_err_t);
+end-pr;
+
+dcl-pr imoq_stubLoad ind extproc('IMOQ_STUBLOAD');
+  id int(10) const;
+  stub likeds(imoq_stub_t);
+  err likeds(imoq_err_t);
+end-pr;
+
+// Mock and procedure exist; procOut is the name as the mock exports it
+dcl-pr imoq_resolveTarget ind extproc('IMOQ_RESOLVETARGET');
+  obj char(10) const;
+  procIn varchar(4096) const;
+  procOut varchar(4096);
+  err likeds(imoq_err_t);
+end-pr;
+
+// Validate one matcher for obj/proc (uppercases m.matcher)
+dcl-pr imoq_checkMatcher ind extproc('IMOQ_CHECKMATCHER');
+  obj char(10) const;
+  proc varchar(4096) const;
+  m likeds(imoq_matcher_t);
+  what varchar(40) const;
+  err likeds(imoq_err_t);
+end-pr;
+
+// Count the recorded calls that match; mode *EXACTLY, *ATLEAST,
+// *ATMOST, *ONCE or *NEVER verifies (IMQ0200 on failure), *COUNT
+// only counts
+dcl-pr imoq_verifyCalls ind extproc('IMOQ_VERIFYCALLS');
+  obj char(10) const;
+  procIn varchar(4096) const;
+  m likeds(imoq_matcher_t) dim(64) const;
+  nM int(10) const;
+  mode char(9) const;
+  want int(10) const;
+  count int(10);
+  err likeds(imoq_err_t);
+end-pr;
+
+dcl-pr imoq_getArg ind extproc('IMOQ_GETARG');
+  obj char(10) const;
+  procIn varchar(4096) const;
+  callNo int(10) const;
+  parmNo int(10) const;
+  val varchar(1024);
+  err likeds(imoq_err_t);
+end-pr;
+
+dcl-pr imoq_cl_noMore extproc('IMOQ_CL_NOMORE');
+  obj char(10) const;
+  err likeds(imoq_err_t);
+end-pr;
+
+dcl-pr imoq_cl_reset extproc('IMOQ_CL_RESET');
+  obj char(10) const;
+  scope char(7) const;
+  err likeds(imoq_err_t);
+end-pr;
+
+dcl-pr imoq_setLastError extproc('IMOQ_SETLASTERROR');
+  text varchar(512) const;
+end-pr;
+
+// ---- RPG API (IMOQAPI) internals, exported for the unit tests -----
+dcl-pr imoq_numText varchar(64) extproc('IMOQ_NUMTEXT');
+  value packed(31:9) const;
 end-pr;
 
 // ---- Public API for test programs (also in IMOQ_H) ---------------

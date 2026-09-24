@@ -43,3 +43,260 @@ end-pr;
 
 dcl-c IMOQ_LAST -1;
 dcl-c IMOQ_PGM '*PGM';
+
+// ==================================================================
+// RPG API: stubs and verifications built from handles (IBM i 7.4
+// TR5 or later, for OVERLOAD). No command strings, no quoting:
+//
+//   h = imoq_when('TAXSRV' : 'CALCTAX');
+//   imoq_with(h : 1 : IMOQ_EQ : 100);
+//   imoq_returns(h : 6.00);
+//
+//   v = imoq_verify('TAXSRV' : 'CALCTAX');
+//   imoq_with(v : 1 : IMOQ_EQ : 100);
+//   assert(imoq_calledOnce(v) : imoq_lastError());
+//
+// Setup calls send escape IMQ0300 when they fail. Checks return
+// *off and leave the reason in imoq_lastError().
+// ==================================================================
+
+// Matchers (imoq_with)
+dcl-c IMOQ_EQ '*EQ';
+dcl-c IMOQ_NE '*NE';
+dcl-c IMOQ_GT '*GT';
+dcl-c IMOQ_GE '*GE';
+dcl-c IMOQ_LT '*LT';
+dcl-c IMOQ_LE '*LE';
+dcl-c IMOQ_LIKE '*LIKE';
+dcl-c IMOQ_ANY '*ANY';
+dcl-c IMOQ_BLANK '*BLANK';
+dcl-c IMOQ_OMIT '*OMIT';
+dcl-c IMOQ_NOTPASSED '*NOTPASSED';
+
+dcl-c IMOQ_MOCK '*MOCK';     // imoq_throws: message IMQ0101
+dcl-c IMOQ_ALWAYS -1;        // imoq_times: answer every call
+dcl-c IMOQ_ALL '*ALL';       // imoq_reset scopes
+dcl-c IMOQ_CALLS '*CALLS';
+dcl-c IMOQ_STUBS '*STUBS';
+
+// ---- Stubbing ----------------------------------------------------
+// Start a stub; returns its handle. Omit proc for a program mock.
+dcl-pr imoq_when int(10) extproc('IMOQ_WHEN');
+  obj char(10) const;
+  proc varchar(4096) const options(*nopass);
+end-pr;
+
+// Add an argument matcher to a stub or a verification.
+// IMOQ_ANY, IMOQ_BLANK, IMOQ_OMIT and IMOQ_NOTPASSED take no value.
+dcl-pr imoq_withChar extproc('IMOQ_WITHCHAR');
+  h int(10) const;
+  parmNo int(10) const;
+  matcher char(10) const;
+  value varchar(1024) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_withNum extproc('IMOQ_WITHNUM');
+  h int(10) const;
+  parmNo int(10) const;
+  matcher char(10) const;
+  value packed(31:9) const;
+end-pr;
+
+dcl-pr imoq_withDate extproc('IMOQ_WITHDATE');
+  h int(10) const;
+  parmNo int(10) const;
+  matcher char(10) const;
+  value date(*iso) const;
+end-pr;
+
+dcl-pr imoq_withTime extproc('IMOQ_WITHTIME');
+  h int(10) const;
+  parmNo int(10) const;
+  matcher char(10) const;
+  value time(*iso) const;
+end-pr;
+
+dcl-pr imoq_withTimestamp extproc('IMOQ_WITHTIMESTAMP');
+  h int(10) const;
+  parmNo int(10) const;
+  matcher char(10) const;
+  value timestamp const;
+end-pr;
+
+dcl-pr imoq_with overload(imoq_withChar : imoq_withNum : imoq_withDate
+                          : imoq_withTime : imoq_withTimestamp);
+
+// Add a return value. Call it again for a series: one value per
+// call, and the last one repeats.
+dcl-pr imoq_returnsChar extproc('IMOQ_RETURNSCHAR');
+  h int(10) const;
+  value varchar(1024) const;
+end-pr;
+
+dcl-pr imoq_returnsNum extproc('IMOQ_RETURNSNUM');
+  h int(10) const;
+  value packed(31:9) const;
+end-pr;
+
+dcl-pr imoq_returnsDate extproc('IMOQ_RETURNSDATE');
+  h int(10) const;
+  value date(*iso) const;
+end-pr;
+
+dcl-pr imoq_returnsTime extproc('IMOQ_RETURNSTIME');
+  h int(10) const;
+  value time(*iso) const;
+end-pr;
+
+dcl-pr imoq_returnsTimestamp extproc('IMOQ_RETURNSTIMESTAMP');
+  h int(10) const;
+  value timestamp const;
+end-pr;
+
+dcl-pr imoq_returns overload(imoq_returnsChar : imoq_returnsNum
+                             : imoq_returnsDate : imoq_returnsTime
+                             : imoq_returnsTimestamp);
+
+// Fill an output parameter when the stub answers
+dcl-pr imoq_setParmChar extproc('IMOQ_SETPARMCHAR');
+  h int(10) const;
+  parmNo int(10) const;
+  value varchar(1024) const;
+end-pr;
+
+dcl-pr imoq_setParmNum extproc('IMOQ_SETPARMNUM');
+  h int(10) const;
+  parmNo int(10) const;
+  value packed(31:9) const;
+end-pr;
+
+dcl-pr imoq_setParmDate extproc('IMOQ_SETPARMDATE');
+  h int(10) const;
+  parmNo int(10) const;
+  value date(*iso) const;
+end-pr;
+
+dcl-pr imoq_setParmTime extproc('IMOQ_SETPARMTIME');
+  h int(10) const;
+  parmNo int(10) const;
+  value time(*iso) const;
+end-pr;
+
+dcl-pr imoq_setParmTimestamp extproc('IMOQ_SETPARMTIMESTAMP');
+  h int(10) const;
+  parmNo int(10) const;
+  value timestamp const;
+end-pr;
+
+dcl-pr imoq_setParm overload(imoq_setParmChar : imoq_setParmNum
+                             : imoq_setParmDate : imoq_setParmTime
+                             : imoq_setParmTimestamp);
+
+// Send an escape message instead of answering. IMOQ_MOCK sends
+// IMQ0101; any other message ID needs its message file.
+dcl-pr imoq_throws extproc('IMOQ_THROWS');
+  h int(10) const;
+  msgId char(7) const;
+  msgDta varchar(512) const options(*nopass);
+  msgf char(10) const options(*nopass);
+  msgfLib char(10) const options(*nopass);
+end-pr;
+
+// Answer only n calls (default IMOQ_ALWAYS)
+dcl-pr imoq_times extproc('IMOQ_TIMES');
+  h int(10) const;
+  n int(10) const;
+end-pr;
+
+// ---- Verification ------------------------------------------------
+// Start a verification; returns its handle. Add matchers with
+// imoq_with, then check. Checks mark the calls they match as
+// verified (see imoq_noMoreCalls); imoq_matchCount does not.
+dcl-pr imoq_verify int(10) extproc('IMOQ_VERIFY');
+  obj char(10) const;
+  proc varchar(4096) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_calledOnce ind extproc('IMOQ_CALLEDONCE');
+  h int(10) const;
+end-pr;
+
+dcl-pr imoq_calledTimes ind extproc('IMOQ_CALLEDTIMES');
+  h int(10) const;
+  n int(10) const;
+end-pr;
+
+dcl-pr imoq_calledAtLeast ind extproc('IMOQ_CALLEDATLEAST');
+  h int(10) const;
+  n int(10) const;
+end-pr;
+
+dcl-pr imoq_calledAtMost ind extproc('IMOQ_CALLEDATMOST');
+  h int(10) const;
+  n int(10) const;
+end-pr;
+
+dcl-pr imoq_neverCalled ind extproc('IMOQ_NEVERCALLED');
+  h int(10) const;
+end-pr;
+
+dcl-pr imoq_matchCount int(10) extproc('IMOQ_MATCHCOUNT');
+  h int(10) const;
+end-pr;
+
+// *on if every recorded call (to obj, or to any mock) was verified
+dcl-pr imoq_noMoreCalls ind extproc('IMOQ_NOMORECALLS');
+  obj char(10) const options(*nopass);
+end-pr;
+
+// Forget stubs and/or recorded calls (default: everything)
+dcl-pr imoq_reset extproc('IMOQ_RESET');
+  obj char(10) const options(*nopass);
+  scope char(7) const options(*nopass);
+end-pr;
+
+// ---- Captured arguments, typed -----------------------------------
+// Same arguments as imoq_arg. They send IMQ0300 if the call doesn't
+// exist or the value doesn't convert (also for *OMIT/*NOTPASSED).
+dcl-pr imoq_argNum packed(31:9) extproc('IMOQ_ARGNUM');
+  obj char(10) const;
+  proc varchar(4096) const;
+  callNo int(10) const;
+  parmNo int(10) const;
+end-pr;
+
+dcl-pr imoq_argDate date(*iso) extproc('IMOQ_ARGDATE');
+  obj char(10) const;
+  proc varchar(4096) const;
+  callNo int(10) const;
+  parmNo int(10) const;
+end-pr;
+
+dcl-pr imoq_argTime time(*iso) extproc('IMOQ_ARGTIME');
+  obj char(10) const;
+  proc varchar(4096) const;
+  callNo int(10) const;
+  parmNo int(10) const;
+end-pr;
+
+dcl-pr imoq_argTimestamp timestamp extproc('IMOQ_ARGTIMESTAMP');
+  obj char(10) const;
+  proc varchar(4096) const;
+  callNo int(10) const;
+  parmNo int(10) const;
+end-pr;
+
+dcl-pr imoq_argInd ind extproc('IMOQ_ARGIND');
+  obj char(10) const;
+  proc varchar(4096) const;
+  callNo int(10) const;
+  parmNo int(10) const;
+end-pr;
+
+// *off when the argument was *OMIT or not passed
+dcl-pr imoq_argPassed ind extproc('IMOQ_ARGPASSED');
+  obj char(10) const;
+  proc varchar(4096) const;
+  callNo int(10) const;
+  parmNo int(10) const;
+end-pr;

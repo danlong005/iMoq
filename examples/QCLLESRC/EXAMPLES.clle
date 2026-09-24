@@ -46,6 +46,8 @@
              CALLSUBR   SUBR(RUN)
              CHGVAR     VAR(&EX) VALUE('EXCL')
              CALLSUBR   SUBR(RUN)
+             CHGVAR     VAR(&EX) VALUE('EXAPI')
+             CALLSUBR   SUBR(RUN)
 
              IF         COND(&FAILS *GT 0) THEN(DO)
              CHGVAR     VAR(&NBR) VALUE(%CHAR(&FAILS))

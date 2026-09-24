@@ -57,11 +57,14 @@
              CRTSQLRPGI OBJ(QTEMP/IMOQGEN) SRCFILE(&SRCLIB/QRPGLESRC) +
                           SRCMBR(IMOQGEN) COMMIT(*NONE) +
                           OBJTYPE(*MODULE) GENLVL(11) DBGVIEW(*SOURCE)
+             CHGVAR     VAR(&STEP) VALUE('IMOQAPI module')
+             CRTRPGMOD  MODULE(QTEMP/IMOQAPI) SRCFILE(&SRCLIB/QRPGLESRC) +
+                          SRCMBR(IMOQAPI) DBGVIEW(*SOURCE)
              CHGVAR     VAR(&STEP) VALUE('IMOQENG service program')
              DLTSRVPGM  SRVPGM(&LIB/IMOQENG)
              MONMSG     MSGID(CPF2105)
              CRTSRVPGM  SRVPGM(&LIB/IMOQENG) MODULE(QTEMP/IMOQCDC +
-                          QTEMP/IMOQENG QTEMP/IMOQGEN) +
+                          QTEMP/IMOQENG QTEMP/IMOQGEN QTEMP/IMOQAPI) +
                           EXPORT(*SRCFILE) SRCFILE(&SRCLIB/QSRVSRC) +
                           SRCMBR(IMOQENG) ACTGRP(IMOQ) +
                           TEXT('iMoq engine')
@@ -196,7 +199,8 @@
              ADDMSGD    MSGID(IMQ0202) MSGF(&LIB/IMOQMSGF) MSG('&1') +
                           SECLVL('&1') SEV(40) FMT((*CHAR 512))
              ADDMSGD    MSGID(IMQ0300) MSGF(&LIB/IMOQMSGF) MSG('&1') +
-                          SECLVL('A command run with imoq() failed.') +
+                          SECLVL('A command run with imoq(), or a call +
+                          to the iMoq RPG API, failed.') +
                           SEV(40) FMT((*CHAR 512))
              ENDSUBR
              ENDPGM

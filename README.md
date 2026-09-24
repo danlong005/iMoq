@@ -37,8 +37,9 @@ IMOQRMV
   actually happened.
 - **No recompiles between tests.** Stubs are stored as data, so you create
   mocks once per driver and restub them in every test.
-- **Works from CL and RPG.** The commands run in CL drivers, and the `IMOQ_H`
-  copybook wraps them for RPGUnit (or any RPG) tests.
+- **Works from CL and RPG.** The commands run in CL drivers. RPGUnit (or any
+  RPG) tests use the `IMOQ_H` copybook, whose RPG API takes typed values
+  instead of command strings.
 - **Mocks in QTEMP or any library.** Mocks go in QTEMP by default, so they
   disappear with the job. `IMOQPGM` and `IMOQSRVPGM` take `LIB(name)` to create
   them in another library instead. iMoq never replaces a real object: it only
@@ -68,13 +69,23 @@ A test in RPG looks like this:
 ```rpgle
 dcl-proc test_total_adds_tax export;
   dcl-s name char(50);
-  imoq('IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) RETURN(''6.00'')');
+  dcl-s h int(10);
+  dcl-s v int(10);
+
+  h = imoq_when('TAXSRV' : 'CALCTAX');
+  imoq_returns(h : 6.00);
 
   aEqual('106.00' : %char(order_total('C001' : 100 : 'PA' : name)));
-  assert(imoq_ok('IMOQVERIFY OBJ(TAXSRV) PROC(CALCTAX) TIMES(*ONCE)')
-         : imoq_lastError());
+
+  v = imoq_verify('TAXSRV' : 'CALCTAX');
+  imoq_with(v : 2 : IMOQ_EQ : 'PA');
+  assert(imoq_calledOnce(v) : imoq_lastError());
 end-proc;
 ```
+
+The RPG API's typed calls need IBM i 7.4 TR5 or later. On any release, tests can
+also run the commands themselves:
+`imoq('IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) RETURN(''6.00'')')`.
 
 ## Documentation
 
@@ -98,7 +109,7 @@ physical file.
 
 | Folder | Contents |
 |---|---|
-| `QRPGLESRC` | Engine (`IMOQENG`, `IMOQGEN`, `IMOQCDC`), copybooks `IMOQ_H` and `IMOQENG_H` |
+| `QRPGLESRC` | Engine (`IMOQENG`, `IMOQGEN`, `IMOQCDC`, `IMOQAPI`), copybooks `IMOQ_H`, `IMOQRU_H` and `IMOQENG_H` |
 | `QCLLESRC` | `BUILD`, the `IMOQINST` installer, command processing programs `IMQ*C` |
 | `QCMDSRC` | Command definitions `IMOQPGM` … `IMOQCHK` |
 | `QSRVSRC` | Binder source for `IMOQENG` |
