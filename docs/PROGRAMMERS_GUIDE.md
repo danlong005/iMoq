@@ -583,6 +583,8 @@ IMOQPGM    OBJ(CUSTLKUP) PARMS((*CHAR 10) (*CHAR 50) (*IND)) LIB(TESTLIB)
 - **Library list:** the mock library must come before the real object's library, just as QTEMP must. `IMOQPGM`, `IMOQBUILD` and `IMOQCHK` check this.
 - **Lifetime:** the mock *object* stays in the library after the job ends, but its stubs and recorded calls live in QTEMP and belong to the job. Run `IMOQRMV` at the end of the driver so no mock is left behind for other jobs to call.
 
+The [EXLIB example](EXAMPLES.md#exlib-create-a-mock-in-another-library) shows all three.
+
 ---
 
 ## 10. Troubleshooting

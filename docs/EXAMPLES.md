@@ -24,6 +24,8 @@ For the concepts behind the examples, see the
   - [EXTHROW: make a dependency fail](#exthrow-make-a-dependency-fail)
   - [EXSTRICT: fail on unexpected calls](#exstrict-fail-on-unexpected-calls)
   - [EXOMIT: optional parameters](#exomit-optional-parameters)
+  - [EXVALUE: parameters passed by value](#exvalue-parameters-passed-by-value)
+  - [EXTYPES: varchar, zoned, float and pointer parameters](#extypes-varchar-zoned-float-and-pointer-parameters)
 - Checking what happened
   - [EXVERIFY: check how often something was called](#exverify-check-how-often-something-was-called)
   - [EXNOMORE: make sure nothing else was called](#exnomore-make-sure-nothing-else-was-called)
@@ -32,6 +34,7 @@ For the concepts behind the examples, see the
 - Test housekeeping
   - [EXRESET: clear calls or stubs between tests](#exreset-clear-calls-or-stubs-between-tests)
   - [EXCL: use the mocks from CL](#excl-use-the-mocks-from-cl)
+  - [EXLIB: create a mock in another library](#exlib-create-a-mock-in-another-library)
   - [EXAPI: everything the RPG API can do](#exapi-everything-the-rpg-api-can-do)
   - [EXAMPLES: run every example](#examples-run-every-example)
 - [The end-to-end demo](#the-end-to-end-demo)
@@ -77,7 +80,7 @@ The drivers make the library the job's current library.
 
 ## How the examples are set up
 
-To keep each example tiny, the examples call three dependencies **directly**
+To keep each example tiny, the examples call their dependencies **directly**
 instead of going through separate code under test. None of these dependencies
 exists as a real object: each example's driver creates the mocks that example
 needs.
@@ -86,7 +89,9 @@ needs.
 |---|---|---|---|
 | `EXCUST` | `*PGM` | Customer lookup | `custId char(5) const`, `name char(30)`, `found ind` |
 | `EXAUDIT` | `*PGM`, strict | Audit trail | `event char(20) const` |
-| `EXPRICE` | `*SRVPGM` | Pricing service | `EX_PRICE(item char(5) const) packed(7:2)`<br>`EX_DISCOUNT(amount packed(7:2) const : code char(10) const options(*nopass:*omit)) packed(7:2)`<br>`EX_LOG(text char(50) const)` |
+| `EXPRICE` | `*SRVPGM` | Pricing service | `EX_PRICE(item char(5) const) packed(7:2)`<br>`EX_DISCOUNT(amount packed(7:2) const : code char(10) const options(*nopass:*omit)) packed(7:2)`<br>`EX_LOG(text char(50) const)`<br>`EX_SCHEDULE` and `EX_CUTOFF` (`EXAPI` only: time, timestamp and date parameters) |
+| `EXCALC` | `*SRVPGM` | Calculator (`EXVALUE`) | `EX_ROUND(amount packed(9:2) value : places int(10) value) packed(9:2)` |
+| `EXPROF` | `*PGM` | Customer profile (`EXTYPES`) | `name varchar(30)`, `balance zoned(9:2)`, `rate float(8)`, `note pointer` |
 
 Each example declares the prototypes it calls (`getCustomer`, `writeAudit`,
 `getPrice`, `getDiscount` or `logMessage`) at its top, so everything an example
@@ -350,7 +355,10 @@ on-error;
   failed = *on;
 endmon;
 
-expect(failed : 'EXCUST sends an escape message');
+expect(failed and psds.excId = 'CPF9898' : 'EXCUST sends CPF9898');
+
+imoq('IMOQWHEN OBJ(EXCUST) +
+      THROW(*MOCK *MOCK *LIBL ''Customer file is locked'')');
 ```
 
 What to notice:
@@ -358,7 +366,10 @@ What to notice:
   takes one set of parentheses.
 - **The caller gets a normal escape message**, so error handling can be tested
   exactly as it runs in production.
-- **`THROW(*MOCK)`** sends iMoq's own IMQ0101.
+- **`THROW(*MOCK *MOCK …)`** sends iMoq's own IMQ0101 from its message file,
+  with your text.
+- **The program status data structure** (positions 40–46) holds the ID of the
+  message `MONITOR` caught.
 
 ### EXSTRICT: fail on unexpected calls
 
@@ -416,6 +427,64 @@ What to notice:
   `*OMIT`.
 - **`*ANY` matches anything,** including missing parameters.
 - **`imoq_arg` reports missing parameters** as `*NOTPASSED` or `*OMIT`.
+
+### EXVALUE: parameters passed by value
+
+Test program [`EXVALUE_T`](../examples/QRPGLESRC/EXVALUE_T.rpgle), driver [`EXVALUE`](../examples/QCLLESRC/EXVALUE.clle)
+
+```
+IMOQPROC   OBJ(EXCALC) PROC(EX_ROUND) RTNTYPE(*PACKED 9 2) +
+             PARMS((*PACKED 9 2 *VALUE) (*INT 10 0 *VALUE))
+```
+
+```rpgle
+imoq('IMOQWHEN OBJ(EXCALC) PROC(EX_ROUND) +
+      ARGS((2 *EQ 0)) RETURN(''13.00'')');
+
+expect(roundTo(12.55 : 0) = 13.00 : 'no decimal places');
+expect(imoq_arg('EXCALC' : 'EX_ROUND' : 1 : 1) = '12.55' : ...);
+
+expect(not imoq_ok('IMOQWHEN OBJ(EXCALC) PROC(EX_ROUND) +
+                    SETPARM((1 ''0''))') : ...);
+```
+
+What to notice:
+- **`*VALUE` goes in the layout** where the passing style goes, exactly as the
+  prototype says `value`. Get it wrong and the stub reads garbage.
+- **Matchers and captures work as usual.**
+- **`SETPARM` is refused** with IMQ0014: the caller keeps its own copy of a
+  value parameter, so there's nothing to write back to.
+
+### EXTYPES: varchar, zoned, float and pointer parameters
+
+Test program [`EXTYPES_T`](../examples/QRPGLESRC/EXTYPES_T.rpgle), driver [`EXTYPES`](../examples/QCLLESRC/EXTYPES.clle)
+
+```
+IMOQPGM    OBJ(EXPROF) PARMS((*VARCHAR 30) (*ZONED 9 2) (*FLOAT 8) (*PTR))
+```
+
+```rpgle
+imoq('IMOQWHEN OBJ(EXPROF) ARGS((1 *EQ ''Ada'')) +
+      SETPARM((2 ''1234.50'') (3 ''0.25'') (4 ''*NULL''))');
+imoq('IMOQWHEN OBJ(EXPROF) ARGS((1 *EQ ''Bob'')) +
+      SETPARM((1 ''Robert''))');
+...
+imoq('IMOQWHEN OBJ(EXPROF) +
+      ARGS((2 *GT 1000) (3 *LT 1) (4 *EQ ''*NOTNULL'')) +
+      SETPARM((1 ''BIG SPENDER''))');
+...
+expect(%float(imoq_arg('EXPROF' : IMOQ_PGM : IMOQ_LAST : 3)) = 0.5 : ...);
+expect(imoq_arg('EXPROF' : IMOQ_PGM : IMOQ_LAST : 4) = '*NOTNULL' : ...);
+```
+
+What to notice:
+- **Setting a varchar sets its length too:** after `SETPARM((1 'Robert'))`,
+  `%len(name)` is 6.
+- **Zoned and float compare as numbers,** so `*GT 1000` and `*LT 1` work.
+- **Pointers are `*NULL` or `*NOTNULL`.** A matcher can test which, and a stub
+  can set a pointer to `*NULL`, but not point it anywhere else.
+- **A captured float is text in E notation,** such as `5.000000000000000E-001`.
+  Convert it with `%float` before comparing.
 
 ---
 
@@ -575,6 +644,32 @@ What to notice:
 - **`IMOQCOUNT` and `IMOQGETARG` only work in CL programs,** because they return
   values into CL variables. RPG uses `imoq_count` and `imoq_arg`.
 - **A failed `IMOQVERIFY` sends IMQ0200,** which CL can monitor.
+
+### EXLIB: create a mock in another library
+
+Driver and example in one: [`EXLIB`](../examples/QCLLESRC/EXLIB.clle)
+
+```
+IMOQPGM    OBJ(EXCUST) PARMS((*CHAR 5) (*CHAR 30) (*IND)) LIB(&LIB)
+IMOQWHEN   OBJ(EXCUST) SETPARM((2 'Ada Lovelace') (3 '1'))
+CALL       PGM(EXCUST) PARM('C0001' &NAME &FOUND)
+
+CRTDUPOBJ  OBJ(EXLIB) FROMLIB(&LIB) OBJTYPE(*PGM) TOLIB(&LIB) +
+             NEWOBJ(EXREAL)
+IMOQPGM    OBJ(EXREAL) PARMS((*CHAR 5)) LIB(&LIB)
+MONMSG     MSGID(IMQ0016) EXEC(CHGVAR VAR(&REFUSED) VALUE('1'))
+
+IMOQRMV    OBJ(EXCUST)
+```
+
+What to notice:
+- **`LIB(name)` puts the mock object in that library** instead of QTEMP. It
+  must come before any real object of that name in the library list.
+- **Stubs and calls still live in QTEMP,** so they belong to this job.
+- **iMoq never replaces a real object.** `EXREAL` isn't an iMoq mock, so
+  `IMOQPGM` refuses with IMQ0016 and leaves it alone.
+- **`IMOQRMV OBJ(name)` removes one mock.** A mock outside QTEMP outlives the
+  job, so remove it at the end of the driver.
 
 ### EXAPI: everything the RPG API can do
 

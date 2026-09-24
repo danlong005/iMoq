@@ -6,8 +6,6 @@ priority order within each section.
 
 ## Next up
 
-- [ ] Add examples for `LIB()`, `*VALUE` passing and the varchar, zoned,
-      float and pointer types.
 - [ ] Support data structure subfields (see [Features](#features)).
 - [ ] Add in-order verification and unused-stub detection.
 
@@ -37,17 +35,6 @@ priority order within each section.
 - **Call the real object** (like Moq's `CallBase` or Mockito's `spy`). Letting
   a test reach the real program or procedure is too risky: a test could update
   real data.
-
-## Documentation
-
-- [ ] Example that creates mocks in another library with `LIB()`.
-- [ ] Example of a `*VALUE` parameter.
-- [ ] Example of the command form `THROW(*MOCK …)`. The API form,
-      `imoq_throws(h : IMOQ_MOCK …)`, is in `EXAPI`.
-- [ ] Example of `IMOQRMV OBJ(name)` (removing a single mock).
-- [ ] Examples using varchar, zoned, float and pointer parameters. Today
-      only the conversion unit tests (`IMOQENG_T`) use them. (Dates, times,
-      timestamps and indicators are covered by `EXAPI`.)
 
 ## Testing
 

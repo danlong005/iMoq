@@ -1,0 +1,37 @@
+/* ---------------------------------------------------------------- */
+/* EXTYPES - Varchar, zoned, float and pointer parameters           */
+/*                                                                  */
+/* Driver for test program EXTYPES_T.                               */
+/*   CRTBNDCL PGM(IMOQ/EXTYPES) SRCFILE(IMOQ/QCLLESRC)              */
+/*   CALL IMOQ/EXTYPES PARM('IMOQ')                                 */
+/* ---------------------------------------------------------------- */
+             PGM        PARM(&LIB)
+             DCL        VAR(&LIB) TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSG) TYPE(*CHAR) LEN(512)
+
+/* iMoq and the example source are in &LIB                          */
+             CHGCURLIB  CURLIB(&LIB)
+
+/* 1. Create the mock: name varchar(30), balance zoned(9:2),        */
+/*    rate float(8), note pointer                                   */
+             IMOQPGM    OBJ(EXPROF) PARMS((*VARCHAR 30) (*ZONED 9 +
+                          2) (*FLOAT 8) (*PTR))
+
+/* 2. Compile the test program                                      */
+             CRTRPGMOD  MODULE(QTEMP/EXTYPES_T) SRCFILE(&LIB/QRPGLESRC)
+             CRTPGM     PGM(QTEMP/EXTYPES_T) MODULE(QTEMP/EXTYPES_T) +
+                          BNDSRVPGM((*LIBL/IMOQENG)) ACTGRP(*NEW)
+
+/* 3. Run it. A failed expect() arrives as escape message CPF9898.  */
+             CALL       PGM(QTEMP/EXTYPES_T)
+             MONMSG     MSGID(CPF9898) EXEC(DO)
+             RCVMSG     MSGTYPE(*EXCP) MSG(&MSG)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) MSGDTA('EXTYPES +
+                          failed:' *BCAT &MSG) MSGTYPE(*ESCAPE)
+             ENDDO
+
+/* 4. Remove the mocks                                              */
+             IMOQRMV
+             SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('EXTYPES +
+                          passed') MSGTYPE(*COMP)
+             ENDPGM

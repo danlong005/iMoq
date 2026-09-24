@@ -90,7 +90,7 @@ also run the commands themselves:
 ## Documentation
 
 New to mocking on IBM i? Start with the **[Examples](docs/EXAMPLES.md)**:
-about fifteen short programs, each showing one feature, with the key code
+about twenty short programs, each showing one feature, with the key code
 explained.
 
 The **[Programmer's Guide](docs/PROGRAMMERS_GUIDE.md)** covers everything:

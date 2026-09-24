@@ -1,0 +1,62 @@
+/* ---------------------------------------------------------------- */
+/* EXLIB - Create a mock in another library, remove it by name      */
+/*                                                                  */
+/* Features: IMOQPGM LIB(name), the IMQ0016 safety check, and       */
+/*           IMOQRMV OBJ(name).                                     */
+/* The mock goes in &LIB (the current library) instead of QTEMP.    */
+/* Everything happens in this one program; there is no RPG part.    */
+/*   CRTBNDCL PGM(IMOQ/EXLIB) SRCFILE(IMOQ/QCLLESRC)                */
+/*   CALL IMOQ/EXLIB PARM('IMOQ')                                   */
+/* ---------------------------------------------------------------- */
+             PGM        PARM(&LIB)
+             DCL        VAR(&LIB) TYPE(*CHAR) LEN(10)
+             DCL        VAR(&NAME) TYPE(*CHAR) LEN(30)
+             DCL        VAR(&FOUND) TYPE(*CHAR) LEN(1)
+             DCL        VAR(&REFUSED) TYPE(*LGL) VALUE('0')
+
+             CHGCURLIB  CURLIB(&LIB)
+
+/* 1. Create the mock in &LIB. It must come before any real EXCUST  */
+/*    in the library list, which the current library does.          */
+             IMOQPGM    OBJ(EXCUST) PARMS((*CHAR 5) (*CHAR 30) +
+                          (*IND)) LIB(&LIB)
+             CHKOBJ     OBJ(&LIB/EXCUST) OBJTYPE(*PGM)
+
+/* 2. Stubbing, calling and verifying work as for a QTEMP mock.      */
+/*    The stubs and calls still live in QTEMP, in this job.          */
+             IMOQWHEN   OBJ(EXCUST) SETPARM((2 'Ada Lovelace') (3 '1'))
+             CALL       PGM(EXCUST) PARM('C0001' &NAME &FOUND)
+             IF         COND(&NAME *NE 'Ada Lovelace') +
+                          THEN(SNDPGMMSG MSGID(CPF9898) +
+                          MSGF(QCPFMSG) MSGDTA('The mock in' *BCAT +
+                          &LIB *BCAT 'did not answer') +
+                          MSGTYPE(*ESCAPE))
+             IMOQVERIFY OBJ(EXCUST) ARGS((1 *EQ C0001)) TIMES(*ONCE)
+
+/* 3. iMoq never replaces a real object. EXREAL is a real program   */
+/*    (a copy of this one), so IMOQPGM refuses with IMQ0016.        */
+             CRTDUPOBJ  OBJ(EXLIB) FROMLIB(&LIB) OBJTYPE(*PGM) +
+                          TOLIB(&LIB) NEWOBJ(EXREAL)
+             MONMSG     MSGID(CPF2130)
+             IMOQPGM    OBJ(EXREAL) PARMS((*CHAR 5)) LIB(&LIB)
+             MONMSG     MSGID(IMQ0016) EXEC(CHGVAR VAR(&REFUSED) +
+                          VALUE('1'))
+             CHKOBJ     OBJ(&LIB/EXREAL) OBJTYPE(*PGM)
+             DLTPGM     PGM(&LIB/EXREAL)
+             IF         COND(*NOT &REFUSED) THEN(SNDPGMMSG +
+                          MSGID(CPF9898) MSGF(QCPFMSG) +
+                          MSGDTA('IMOQPGM should refuse to replace +
+                          a real program') MSGTYPE(*ESCAPE))
+
+/* 4. Remove just this mock. A mock outside QTEMP outlives the job, */
+/*    so always remove it at the end of the driver.                 */
+             IMOQRMV    OBJ(EXCUST)
+             CHKOBJ     OBJ(&LIB/EXCUST) OBJTYPE(*PGM)
+             MONMSG     MSGID(CPF9801) EXEC(GOTO CMDLBL(GONE))
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) +
+                          MSGDTA('IMOQRMV OBJ(EXCUST) should delete +
+                          the mock from' *BCAT &LIB) MSGTYPE(*ESCAPE)
+
+ GONE:       SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('EXLIB +
+                          passed') MSGTYPE(*COMP)
+             ENDPGM
