@@ -76,4 +76,9 @@ STRPGMEXP  PGMLVL(*CURRENT) SIGNATURE('IMOQ V1')
   EXPORT     SYMBOL(IMOQ_ARGPASSED)
   /* internal, exported for the IMOQENG_T unit tests */
   EXPORT     SYMBOL(IMOQ_NUMTEXT)
+  /* data structure subfields and arrays (IMOQFIELD) */
+  EXPORT     SYMBOL(IMOQ_CL_DEFFIELD)
+  /* internal, exported for the IMOQENG_T unit tests */
+  EXPORT     SYMBOL(IMOQ_BYTESIZE)
+  EXPORT     SYMBOL(IMOQ_PARSEFIELD)
 ENDPGMEXP

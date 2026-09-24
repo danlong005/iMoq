@@ -108,6 +108,52 @@ dcl-proc imoq_isNumeric export;
 end-proc;
 
 // ==================================================================
+// imoq_byteSize - storage bytes of a (normalized) layout
+// ==================================================================
+dcl-proc imoq_byteSize export;
+  dcl-pi *n int(10);
+    def likeds(imoq_def_t) const;
+  end-pi;
+
+  select;
+  when def.type = '*CHAR';
+    return def.len;
+  when def.type = '*VARCHAR';
+    if def.len > 65535;
+      return def.len + 4;
+    endif;
+    return def.len + 2;
+  when def.type = '*PACKED';
+    return %div(def.len : 2) + 1;
+  when def.type = '*ZONED';
+    return def.len;
+  when def.type = '*INT' or def.type = '*UNS';
+    select;
+    when def.len = 3;
+      return 1;
+    when def.len = 5;
+      return 2;
+    when def.len = 10;
+      return 4;
+    endsl;
+    return 8;
+  when def.type = '*FLOAT';
+    return def.len;
+  when def.type = '*IND';
+    return 1;
+  when def.type = '*DATE';
+    return 10;
+  when def.type = '*TIME';
+    return 8;
+  when def.type = '*TIMESTAMP';
+    return 26;
+  when def.type = '*PTR';
+    return 16;
+  endsl;
+  return 0;
+end-proc;
+
+// ==================================================================
 // imoq_validMatcher
 // ==================================================================
 dcl-proc imoq_validMatcher export;

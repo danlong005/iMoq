@@ -4,7 +4,7 @@
              PGM        PARM(&OBJ &PROC &ARGS &TIMES)
              DCL        VAR(&OBJ) TYPE(*CHAR) LEN(10)
              DCL        VAR(&PROC) TYPE(*CHAR) LEN(258)
-             DCL        VAR(&ARGS) TYPE(*CHAR) LEN(18000)
+             DCL        VAR(&ARGS) TYPE(*CHAR) LEN(21000)
              DCL        VAR(&TIMES) TYPE(*CHAR) LEN(20)
              DCL        VAR(&ERR) TYPE(*CHAR) LEN(529)
              DCL        VAR(&ERRID) TYPE(*CHAR) LEN(7) STG(*DEFINED) +

@@ -26,13 +26,15 @@ end-pr;
 // Text of the last failure (verification message, strict-mock call...)
 dcl-pr imoq_lastError varchar(512) extproc('IMOQ_LASTERROR') end-pr;
 
-// Captured argument as text: callNo 1..n or IMOQ_LAST, parmNo 1..64.
+// Captured argument as text: callNo 1..n or IMOQ_LAST, parmNo 1..64,
+// field a subfield declared with IMOQFIELD (NAME, or NAME(i)).
 // Returns *OMIT / *NOTPASSED for missing arguments.
 dcl-pr imoq_arg varchar(1024) extproc('IMOQ_ARG');
   obj char(10) const;
   proc varchar(4096) const;
   callNo int(10) const;
   parmNo int(10) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 // Number of recorded calls (-1 if the mock or procedure is unknown)
@@ -45,8 +47,11 @@ dcl-c IMOQ_LAST -1;
 dcl-c IMOQ_PGM '*PGM';
 
 // ==================================================================
-// RPG API: stubs and verifications built from handles (IBM i 7.4
-// TR5 or later, for OVERLOAD). No command strings, no quoting:
+// RPG API: stubs and verifications built from handles. No command
+// strings, no quoting. imoq_with, imoq_returns and imoq_setParm use
+// OVERLOAD (IBM i 7.4 TR5 or later); on an older compiler,
+// /define IMOQ_NO_OVERLOAD before the /copy and call the typed
+// procedures (imoq_withChar, imoq_withNum ...) directly.
 //
 //   h = imoq_when('TAXSRV' : 'CALCTAX');
 //   imoq_with(h : 1 : IMOQ_EQ : 100);
@@ -88,11 +93,14 @@ end-pr;
 
 // Add an argument matcher to a stub or a verification.
 // IMOQ_ANY, IMOQ_BLANK, IMOQ_OMIT and IMOQ_NOTPASSED take no value.
+// field matches a subfield declared with IMOQFIELD instead of the
+// whole parameter: NAME, or NAME(i) for an array element.
 dcl-pr imoq_withChar extproc('IMOQ_WITHCHAR');
   h int(10) const;
   parmNo int(10) const;
   matcher char(10) const;
   value varchar(1024) const options(*nopass);
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_withNum extproc('IMOQ_WITHNUM');
@@ -100,6 +108,7 @@ dcl-pr imoq_withNum extproc('IMOQ_WITHNUM');
   parmNo int(10) const;
   matcher char(10) const;
   value packed(31:9) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_withDate extproc('IMOQ_WITHDATE');
@@ -107,6 +116,7 @@ dcl-pr imoq_withDate extproc('IMOQ_WITHDATE');
   parmNo int(10) const;
   matcher char(10) const;
   value date(*iso) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_withTime extproc('IMOQ_WITHTIME');
@@ -114,6 +124,7 @@ dcl-pr imoq_withTime extproc('IMOQ_WITHTIME');
   parmNo int(10) const;
   matcher char(10) const;
   value time(*iso) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_withTimestamp extproc('IMOQ_WITHTIMESTAMP');
@@ -121,10 +132,13 @@ dcl-pr imoq_withTimestamp extproc('IMOQ_WITHTIMESTAMP');
   parmNo int(10) const;
   matcher char(10) const;
   value timestamp const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
+/if not defined(IMOQ_NO_OVERLOAD)
 dcl-pr imoq_with overload(imoq_withChar : imoq_withNum : imoq_withDate
                           : imoq_withTime : imoq_withTimestamp);
+/endif
 
 // Add a return value. Call it again for a series: one value per
 // call, and the last one repeats.
@@ -153,44 +167,55 @@ dcl-pr imoq_returnsTimestamp extproc('IMOQ_RETURNSTIMESTAMP');
   value timestamp const;
 end-pr;
 
+/if not defined(IMOQ_NO_OVERLOAD)
 dcl-pr imoq_returns overload(imoq_returnsChar : imoq_returnsNum
                              : imoq_returnsDate : imoq_returnsTime
                              : imoq_returnsTimestamp);
+/endif
 
-// Fill an output parameter when the stub answers
+// Fill an output parameter when the stub answers. With field, fill
+// one subfield (NAME or NAME(i)); parameter 0 with a field sets a
+// subfield of the data structure the procedure returns.
 dcl-pr imoq_setParmChar extproc('IMOQ_SETPARMCHAR');
   h int(10) const;
   parmNo int(10) const;
   value varchar(1024) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_setParmNum extproc('IMOQ_SETPARMNUM');
   h int(10) const;
   parmNo int(10) const;
   value packed(31:9) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_setParmDate extproc('IMOQ_SETPARMDATE');
   h int(10) const;
   parmNo int(10) const;
   value date(*iso) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_setParmTime extproc('IMOQ_SETPARMTIME');
   h int(10) const;
   parmNo int(10) const;
   value time(*iso) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_setParmTimestamp extproc('IMOQ_SETPARMTIMESTAMP');
   h int(10) const;
   parmNo int(10) const;
   value timestamp const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
+/if not defined(IMOQ_NO_OVERLOAD)
 dcl-pr imoq_setParm overload(imoq_setParmChar : imoq_setParmNum
                              : imoq_setParmDate : imoq_setParmTime
                              : imoq_setParmTimestamp);
+/endif
 
 // Send an escape message instead of answering. IMOQ_MOCK sends
 // IMQ0101; any other message ID needs its message file.
@@ -263,6 +288,7 @@ dcl-pr imoq_argNum packed(31:9) extproc('IMOQ_ARGNUM');
   proc varchar(4096) const;
   callNo int(10) const;
   parmNo int(10) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_argDate date(*iso) extproc('IMOQ_ARGDATE');
@@ -270,6 +296,7 @@ dcl-pr imoq_argDate date(*iso) extproc('IMOQ_ARGDATE');
   proc varchar(4096) const;
   callNo int(10) const;
   parmNo int(10) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_argTime time(*iso) extproc('IMOQ_ARGTIME');
@@ -277,6 +304,7 @@ dcl-pr imoq_argTime time(*iso) extproc('IMOQ_ARGTIME');
   proc varchar(4096) const;
   callNo int(10) const;
   parmNo int(10) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_argTimestamp timestamp extproc('IMOQ_ARGTIMESTAMP');
@@ -284,6 +312,7 @@ dcl-pr imoq_argTimestamp timestamp extproc('IMOQ_ARGTIMESTAMP');
   proc varchar(4096) const;
   callNo int(10) const;
   parmNo int(10) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_argInd ind extproc('IMOQ_ARGIND');
@@ -291,6 +320,7 @@ dcl-pr imoq_argInd ind extproc('IMOQ_ARGIND');
   proc varchar(4096) const;
   callNo int(10) const;
   parmNo int(10) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 // *off when the argument was *OMIT or not passed
@@ -299,4 +329,5 @@ dcl-pr imoq_argPassed ind extproc('IMOQ_ARGPASSED');
   proc varchar(4096) const;
   callNo int(10) const;
   parmNo int(10) const;
+  field varchar(40) const options(*nopass);
 end-pr;

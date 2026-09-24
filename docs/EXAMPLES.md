@@ -26,6 +26,7 @@ For the concepts behind the examples, see the
   - [EXOMIT: optional parameters](#exomit-optional-parameters)
   - [EXVALUE: parameters passed by value](#exvalue-parameters-passed-by-value)
   - [EXTYPES: varchar, zoned, float and pointer parameters](#extypes-varchar-zoned-float-and-pointer-parameters)
+  - [EXFIELD: data structures, arrays and data structure returns](#exfield-data-structures-arrays-and-data-structure-returns)
 - Checking what happened
   - [EXVERIFY: check how often something was called](#exverify-check-how-often-something-was-called)
   - [EXNOMORE: make sure nothing else was called](#exnomore-make-sure-nothing-else-was-called)
@@ -92,6 +93,7 @@ needs.
 | `EXPRICE` | `*SRVPGM` | Pricing service | `EX_PRICE(item char(5) const) packed(7:2)`<br>`EX_DISCOUNT(amount packed(7:2) const : code char(10) const options(*nopass:*omit)) packed(7:2)`<br>`EX_LOG(text char(50) const)`<br>`EX_SCHEDULE` and `EX_CUTOFF` (`EXAPI` only: time, timestamp and date parameters) |
 | `EXCALC` | `*SRVPGM` | Calculator (`EXVALUE`) | `EX_ROUND(amount packed(9:2) value : places int(10) value) packed(9:2)` |
 | `EXPROF` | `*PGM` | Customer profile (`EXTYPES`) | `name varchar(30)`, `balance zoned(9:2)`, `rate float(8)`, `note pointer` |
+| `EXORDER` | `*SRVPGM` | Order entry (`EXFIELD`) | `EX_ADDORDER(order likeds(order_t) const : monthly packed(9:2) dim(12) const) likeds(result_t)`<br>`EX_PRICEIT(order likeds(order_t))` |
 
 Each example declares the prototypes it calls (`getCustomer`, `writeAudit`,
 `getPrice`, `getDiscount` or `logMessage`) at its top, so everything an example
@@ -485,6 +487,52 @@ What to notice:
   can set a pointer to `*NULL`, but not point it anywhere else.
 - **A captured float is text in E notation,** such as `5.000000000000000E-001`.
   Convert it with `%float` before comparing.
+
+### EXFIELD: data structures, arrays and data structure returns
+
+Test program [`EXFIELD_T`](../examples/QRPGLESRC/EXFIELD_T.rpgle), driver [`EXFIELD`](../examples/QCLLESRC/EXFIELD.clle)
+
+```
+IMOQPROC   OBJ(EXORDER) PROC(EX_ADDORDER) RTNTYPE(*CHAR 12) +
+             PARMS((*CHAR 28 *CONST) (*CHAR 60 *CONST))
+IMOQFIELD  OBJ(EXORDER) PROC(EX_ADDORDER) PARM(1) +
+             FIELDS((ITEM 1 *CHAR 5) (QTY *NEXT *PACKED 7 0) +
+                    (PRICE *NEXT *ZONED 9 2) (SHIPPED *NEXT *DATE))
+IMOQFIELD  OBJ(EXORDER) PROC(EX_ADDORDER) PARM(2) +
+             FIELDS((AMT 1 *PACKED 9 2 12))
+IMOQFIELD  OBJ(EXORDER) PROC(EX_ADDORDER) PARM(0) +
+             FIELDS((STATUS 1 *CHAR 2) (TOTAL *NEXT *PACKED 11 2) +
+                    (LINENO *NEXT *INT 10))
+```
+
+```rpgle
+imoq('IMOQWHEN OBJ(EXORDER) PROC(EX_ADDORDER) +
+      ARGS((1 *EQ A0001 ITEM) (1 *GT 10 QTY)) +
+      SETPARM((0 OK STATUS) (0 ''99.50'' TOTAL) (0 7 LINENO))');
+imoq('IMOQWHEN OBJ(EXORDER) PROC(EX_ADDORDER) +
+      ARGS((2 *GT 1000 ''AMT(12)'')) SETPARM((0 HI STATUS))');
+...
+expect(imoq_arg('EXORDER' : 'EX_ADDORDER' : 1 : 1 : 'QTY') = '12' : ...);
+
+// the same with the RPG API
+h = imoq_when('EXORDER' : 'EX_ADDORDER');
+imoq_with(h : 1 : IMOQ_EQ : 'B0002' : 'ITEM');
+imoq_with(h : 2 : IMOQ_EQ : 0 : 'AMT(1)');
+imoq_setParm(h : 0 : 12.50 : 'TOTAL');
+```
+
+What to notice:
+- **A data structure or array is one `*CHAR`,** and `IMOQFIELD` describes
+  its subfields: name, position (or `*NEXT`), type and length, and a number
+  of elements for an array.
+- **The field goes last** in an `ARGS` or `SETPARM` entry, as `FIELD()` on
+  `IMOQGETARG`, and as the last argument in the RPG API. An array element
+  (`AMT(12)`) needs quotes in a command.
+- **Subfields compare by their own type,** so `QTY *GT 10` compares packed
+  numbers.
+- **Parameter 0 is the return value.** `SETPARM` on its fields builds the
+  returned data structure; fields you don't set come back blank or zero.
+- **`SETPARM` on an output data structure changes only that subfield.**
 
 ---
 

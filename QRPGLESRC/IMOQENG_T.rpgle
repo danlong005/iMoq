@@ -1,7 +1,7 @@
 **free
 // ------------------------------------------------------------------
 // IMOQENG_T - iMoq engine unit tests: codec, layouts, matchers,
-//             number text for the RPG API.
+//             number text for the RPG API, subfield sizes and names.
 // Run with IMOQTEST.
 // ------------------------------------------------------------------
 ctl-opt main(runTests) option(*srcstmt:*nodebugio) decprec(63);
@@ -24,6 +24,8 @@ dcl-proc runTests;
   test_invalidPacked();
   test_matchers();
   test_numText();
+  test_byteSize();
+  test_parseField();
   tst_summary(failures);
 end-proc;
 
@@ -189,5 +191,45 @@ dcl-proc test_numText;
            : 'int 10 accepts it');
   tst_eqChar('0.25' : rt('*ZONED' : 5 : 2 : imoq_numText(.25))
            : 'zoned(5:2) accepts it');
+  tst_end();
+end-proc;
+
+dcl-proc test_byteSize;
+  tst_begin('storage sizes of every type');
+  tst_eqNum(10 : imoq_byteSize(mdef('*CHAR' : 10 : 0)) : 'char 10');
+  tst_eqNum(12 : imoq_byteSize(mdef('*VARCHAR' : 10 : 0)) : 'varchar 10');
+  tst_eqNum(4 : imoq_byteSize(mdef('*PACKED' : 7 : 2)) : 'packed 7,2');
+  tst_eqNum(5 : imoq_byteSize(mdef('*PACKED' : 8 : 0)) : 'packed 8,0');
+  tst_eqNum(9 : imoq_byteSize(mdef('*ZONED' : 9 : 2)) : 'zoned 9,2');
+  tst_eqNum(1 : imoq_byteSize(mdef('*INT' : 3 : 0)) : 'int 3');
+  tst_eqNum(2 : imoq_byteSize(mdef('*UNS' : 5 : 0)) : 'uns 5');
+  tst_eqNum(4 : imoq_byteSize(mdef('*INT' : 10 : 0)) : 'int 10');
+  tst_eqNum(8 : imoq_byteSize(mdef('*INT' : 20 : 0)) : 'int 20');
+  tst_eqNum(8 : imoq_byteSize(mdef('*FLOAT' : 8 : 0)) : 'float 8');
+  tst_eqNum(1 : imoq_byteSize(mdef('*IND' : 0 : 0)) : 'ind');
+  tst_eqNum(10 : imoq_byteSize(mdef('*DATE' : 0 : 0)) : 'date');
+  tst_eqNum(8 : imoq_byteSize(mdef('*TIME' : 0 : 0)) : 'time');
+  tst_eqNum(26 : imoq_byteSize(mdef('*TIMESTAMP' : 0 : 0)) : 'timestamp');
+  tst_eqNum(16 : imoq_byteSize(mdef('*PTR' : 0 : 0)) : 'pointer');
+  tst_end();
+end-proc;
+
+dcl-proc test_parseField;
+  dcl-s f varchar(40);
+  dcl-s msg varchar(256);
+  tst_begin('subfield references');
+  tst_check(imoq_parseField('' : f : msg) and f = '' : 'blank: whole');
+  tst_check(imoq_parseField('qty' : f : msg) and f = 'QTY'
+          : 'name, uppercased: ' + f);
+  tst_check(imoq_parseField(' amt( 3 ) ' : f : msg) and f = 'AMT(3)'
+          : 'array element, blanks removed: ' + f);
+  tst_check(imoq_parseField('CUST_NO#2' : f : msg) and f = 'CUST_NO#2'
+          : 'name characters');
+  tst_check(not imoq_parseField('AMT(0)' : f : msg) : 'element 0');
+  tst_check(not imoq_parseField('AMT(X)' : f : msg) : 'element X');
+  tst_check(not imoq_parseField('AMT(1' : f : msg) : 'unclosed');
+  tst_check(not imoq_parseField('(1)' : f : msg) : 'no name');
+  tst_check(not imoq_parseField('A-B' : f : msg) : 'bad character');
+  tst_check(not imoq_parseField('2.QTY' : f : msg) : 'parameter prefix');
   tst_end();
 end-proc;

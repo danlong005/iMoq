@@ -32,6 +32,8 @@ IMOQRMV
   - argument matchers (`*EQ`, `*GT`, `*LIKE`, `*OMIT`, …)
   - consecutive answers and `TIMES(n)` limits
   - loose or strict mocks
+  - data structure subfields, array elements and data structure return
+    values, each matched and set by its own type
 - **Verification:** exact, at-least, at-most and never counts,
   `IMOQNOMORE`, and argument capture. Failure messages list the calls that
   actually happened.

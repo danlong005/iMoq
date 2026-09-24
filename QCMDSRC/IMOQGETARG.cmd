@@ -12,3 +12,5 @@
              PARM       KWD(CALL) TYPE(*INT4) DFT(*LAST) +
                           RANGE(1 9999999) SPCVAL((*LAST -1) +
                           (*FIRST 1)) PROMPT('Call number')
+             PARM       KWD(FIELD) TYPE(*CHAR) LEN(40) DFT(' ') +
+                          PROMPT('Field (IMOQFIELD), or NAME(i)')

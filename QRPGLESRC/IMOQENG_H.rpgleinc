@@ -34,11 +34,14 @@ dcl-ds imoq_throw_t qualified template;
   msgDta varchar(512);
 end-ds;
 
-// Argument matcher: ARGS((parmNo matcher value))
+// Argument matcher: ARGS((parmNo[.field] matcher value)).
+// field is blank for the whole parameter, else a subfield declared
+// with IMOQFIELD: NAME, or NAME(n) for an array element.
 dcl-ds imoq_matcher_t qualified template;
   parmNo int(10);
   matcher char(10);
   val varchar(1024);
+  field varchar(40);
 end-ds;
 
 // A complete stub (IMOQWHEN), as saved by imoq_stubSave
@@ -53,6 +56,7 @@ dcl-ds imoq_stub_t qualified template;
   nSet int(10);
   setNo int(10) dim(64);
   setVal varchar(1024) dim(64);
+  setFld varchar(40) dim(64);
   thrId char(7);
   thrMsgf char(10);
   thrLib char(10);
@@ -93,6 +97,10 @@ dcl-pr imoq_match ind extproc('IMOQ_MATCH');
   expected varchar(1024) const;
   state char(1) const;
   actual varchar(1024) const;
+  def likeds(imoq_def_t) const;
+end-pr;
+
+dcl-pr imoq_byteSize int(10) extproc('IMOQ_BYTESIZE');
   def likeds(imoq_def_t) const;
 end-pr;
 
@@ -177,8 +185,18 @@ dcl-pr imoq_getArg ind extproc('IMOQ_GETARG');
   procIn varchar(4096) const;
   callNo int(10) const;
   parmNo int(10) const;
+  field varchar(40) const;
   val varchar(1024);
   err likeds(imoq_err_t);
+end-pr;
+
+// Parse a subfield reference: NAME, or NAME(i) for an array element.
+// field comes back uppercase without blanks; blank text is valid and
+// means the whole parameter.
+dcl-pr imoq_parseField ind extproc('IMOQ_PARSEFIELD');
+  text varchar(64) const;
+  field varchar(40);
+  msg varchar(256);
 end-pr;
 
 dcl-pr imoq_cl_noMore extproc('IMOQ_CL_NOMORE');
@@ -217,6 +235,7 @@ dcl-pr imoq_arg varchar(1024) extproc('IMOQ_ARG');
   proc varchar(4096) const;
   callNo int(10) const;
   parmNo int(10) const;
+  field varchar(40) const options(*nopass);
 end-pr;
 
 dcl-pr imoq_count int(10) extproc('IMOQ_COUNT');

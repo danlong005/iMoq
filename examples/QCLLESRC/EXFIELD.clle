@@ -1,0 +1,60 @@
+/* ---------------------------------------------------------------- */
+/* EXFIELD - Data structures, arrays and data structure returns     */
+/*                                                                  */
+/* Driver for test program EXFIELD_T.                               */
+/*   CRTBNDCL PGM(IMOQ/EXFIELD) SRCFILE(IMOQ/QCLLESRC)              */
+/*   CALL IMOQ/EXFIELD PARM('IMOQ')                                 */
+/* ---------------------------------------------------------------- */
+             PGM        PARM(&LIB)
+             DCL        VAR(&LIB) TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSG) TYPE(*CHAR) LEN(512)
+
+/* iMoq and the example source are in &LIB                          */
+             CHGCURLIB  CURLIB(&LIB)
+
+/* 1. Create the mock. A data structure or array is one *CHAR of its */
+/*    size; IMOQFIELD then describes what's inside.                  */
+             IMOQSRVPGM OBJ(EXORDER)
+             IMOQPROC   OBJ(EXORDER) PROC(EX_ADDORDER) +
+                          RTNTYPE(*CHAR 12) PARMS((*CHAR 28 *CONST) +
+                          (*CHAR 60 *CONST))
+             IMOQPROC   OBJ(EXORDER) PROC(EX_PRICEIT) +
+                          PARMS((*CHAR 28))
+
+/*    Parameter 1: order_t. *NEXT follows the previous field.        */
+             IMOQFIELD  OBJ(EXORDER) PROC(EX_ADDORDER) PARM(1) +
+                          FIELDS((ITEM 1 *CHAR 5) (QTY *NEXT *PACKED +
+                          7 0) (PRICE *NEXT *ZONED 9 2) (SHIPPED +
+                          *NEXT *DATE))
+             IMOQFIELD  OBJ(EXORDER) PROC(EX_PRICEIT) PARM(1) +
+                          FIELDS((ITEM 1 *CHAR 5) (QTY *NEXT *PACKED +
+                          7 0) (PRICE *NEXT *ZONED 9 2) (SHIPPED +
+                          *NEXT *DATE))
+/*    Parameter 2: an array of 12 packed(9:2), one field with a DIM  */
+             IMOQFIELD  OBJ(EXORDER) PROC(EX_ADDORDER) PARM(2) +
+                          FIELDS((AMT 1 *PACKED 9 2 12))
+/*    Parameter 0: the result_t data structure it returns            */
+             IMOQFIELD  OBJ(EXORDER) PROC(EX_ADDORDER) PARM(0) +
+                          FIELDS((STATUS 1 *CHAR 2) (TOTAL *NEXT +
+                          *PACKED 11 2) (LINENO *NEXT *INT 10))
+             IMOQBUILD  OBJ(EXORDER)
+
+/* 2. Compile the test program                                      */
+             CRTRPGMOD  MODULE(QTEMP/EXFIELD_T) SRCFILE(&LIB/QRPGLESRC)
+             CRTPGM     PGM(QTEMP/EXFIELD_T) MODULE(QTEMP/EXFIELD_T) +
+                          BNDSRVPGM((*LIBL/EXORDER) (*LIBL/IMOQENG)) +
+                          ACTGRP(*NEW)
+
+/* 3. Run it. A failed expect() arrives as escape message CPF9898.  */
+             CALL       PGM(QTEMP/EXFIELD_T)
+             MONMSG     MSGID(CPF9898) EXEC(DO)
+             RCVMSG     MSGTYPE(*EXCP) MSG(&MSG)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) MSGDTA('EXFIELD +
+                          failed:' *BCAT &MSG) MSGTYPE(*ESCAPE)
+             ENDDO
+
+/* 4. Remove the mocks                                              */
+             IMOQRMV
+             SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('EXFIELD +
+                          passed') MSGTYPE(*COMP)
+             ENDPGM

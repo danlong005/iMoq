@@ -44,6 +44,8 @@
              CALLSUBR   SUBR(RUN)
              CHGVAR     VAR(&EX) VALUE('EXTYPES')
              CALLSUBR   SUBR(RUN)
+             CHGVAR     VAR(&EX) VALUE('EXFIELD')
+             CALLSUBR   SUBR(RUN)
              CHGVAR     VAR(&EX) VALUE('EXRESET')
              CALLSUBR   SUBR(RUN)
              CHGVAR     VAR(&EX) VALUE('EXERRMSG')

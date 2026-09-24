@@ -1,13 +1,11 @@
 /* ---------------------------------------------------------------- */
-/* IMQARGC - iMoq command processing program for IMOQGETARG         */
+/* IMQFLDC - iMoq command processing program for IMOQFIELD          */
 /* ---------------------------------------------------------------- */
-             PGM        PARM(&OBJ &PARM &RTNVAL &PROC &CALL &FIELD)
+             PGM        PARM(&OBJ &PROC &PARM &FIELDS)
              DCL        VAR(&OBJ) TYPE(*CHAR) LEN(10)
              DCL        VAR(&PROC) TYPE(*CHAR) LEN(258)
-             DCL        VAR(&CALL) TYPE(*INT) LEN(4)
              DCL        VAR(&PARM) TYPE(*INT) LEN(2)
-             DCL        VAR(&FIELD) TYPE(*CHAR) LEN(40)
-             DCL        VAR(&RTNVAL) TYPE(*CHAR) LEN(256)
+             DCL        VAR(&FIELDS) TYPE(*CHAR) LEN(4000)
              DCL        VAR(&ERR) TYPE(*CHAR) LEN(529)
              DCL        VAR(&ERRID) TYPE(*CHAR) LEN(7) STG(*DEFINED) +
                           DEFVAR(&ERR 1)
@@ -21,9 +19,11 @@
              MONMSG     MSGID(CPF0000 MCH0000) +
                           EXEC(GOTO CMDLBL(FAIL))
 
-             CALLPRC    PRC('IMOQ_CL_GETARG') PARM((&OBJ) (&PROC) +
-                          (&CALL) (&PARM) (&FIELD) (&RTNVAL) (&ERR))
+             CALLPRC    PRC('IMOQ_CL_DEFFIELD') PARM((&OBJ) (&PROC) +
+                          (&PARM) (&FIELDS) (&ERR))
              IF         COND(&ERRID *NE ' ') THEN(GOTO CMDLBL(MOCKERR))
+             SNDPGMMSG  MSGID(IMQ0001) MSGF(&ERRLIB/IMOQMSGF) +
+                          MSGDTA(&ERRTXT) MSGTYPE(*COMP)
              RETURN
 
 /* ---- error exits ------------------------------------------------ */

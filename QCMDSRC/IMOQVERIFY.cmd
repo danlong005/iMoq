@@ -15,6 +15,8 @@
                           *BLANK *OMIT *NOTPASSED) PROMPT('Matcher')
              ELEM       TYPE(*CHAR) LEN(256) VARY(*YES *INT2) +
                           CASE(*MIXED) DFT(' ') PROMPT('Value')
+             ELEM       TYPE(*CHAR) LEN(40) DFT(' ') +
+                          PROMPT('Field (IMOQFIELD), or NAME(i)')
  VDEF:       ELEM       TYPE(*CHAR) LEN(9) RSTD(*YES) DFT(*EXACTLY) +
                           VALUES(*EXACTLY *ATLEAST *ATMOST *ONCE +
                           *NEVER) PROMPT('Comparison')

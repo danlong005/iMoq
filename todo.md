@@ -6,14 +6,10 @@ priority order within each section.
 
 ## Next up
 
-- [ ] Support data structure subfields (see [Features](#features)).
 - [ ] Add in-order verification and unused-stub detection.
 
 ## Features
 
-- [ ] **Data structure subfields.** A data structure can only be described as
-      one `*CHAR`, so packed or zoned subfields can't be matched or set. Let
-      `ARGS` and `SETPARM` address a subfield by offset, type and length.
 - [ ] **Answers built from the arguments.** For example, set parameter 2 from
       parameter 1, or call a user procedure like Moq's `Callback`. Today every
       answer is a fixed value.
@@ -23,9 +19,10 @@ priority order within each section.
       Mockito's strict stubs. Today a stub with a wrong matcher fails silently.
 - [ ] **More flexible matchers.** OR between matchers (all `ARGS` must match
       today), a value-list matcher, and a between matcher.
-- [ ] **More parameter types.** Arrays (`DIM`), data structures as return
-      values, `*VARCHAR` passed `*VALUE`, and captured arguments longer than
-      1,024 characters.
+- [ ] **More parameter types.** `*VARCHAR` passed `*VALUE`, captured
+      arguments longer than 1,024 characters, arrays of data structures
+      (`likeds(x) dim(n)`: a field group repeating with a stride) and nested
+      data structures.
 - [ ] **Detect qualified calls.** Have `IMOQCHK` report code that calls a mocked
       program with a qualified name (`CALL MYLIB/X`, `EXTPGM('MYLIB/X')`), which
       bypasses the mock.

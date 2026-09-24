@@ -317,7 +317,7 @@ iMoq doesn't read prototypes. You describe each parameter as `(type length decim
 - **The passing style can go in the decimals slot.** `(*CHAR 2 *CONST)` and `(*PACKED 11 2 *CONST)` both work. The full form is `(*CHAR 2 0 *CONST)`.
 - **You only need to declare what you use.** A program mock records extra parameters as `*UNDECLARED`. You can still use `*ANY`, `*OMIT` and `*NOTPASSED` matchers on them, but not value matchers or `SETPARM`.
 - **Declare every export whose return value matters.** A service program export without `IMOQPROC` gets a stub with no parameters and no return value. It records calls and can throw, but a caller that reads its return value gets unpredictable data.
-- **Data structures:** describe a DS parameter as one `*CHAR` of its size. Matching and `SETPARM` then work on the whole record as text, which only makes sense when the subfields are character.
+- **Data structures and arrays:** describe them as one `*CHAR` of their size, and their subfields with `IMOQFIELD` (see [Data structures and arrays](#data-structures-and-arrays)).
 - **Export names:** `PROC` is matched exactly first, then case-insensitively. RPG exports are uppercase unless the prototype uses `EXTPROC(*DCLCASE)` or a quoted name.
 - **Changed an interface?** Run `IMOQPROC` again, then `IMOQBUILD`. Stubs alone never need a rebuild.
 - **Where the exports come from.** `IMOQSRVPGM SRCFILE` chooses the source of the export list:
@@ -329,6 +329,56 @@ iMoq doesn't read prototypes. You describe each parameter as `(type length decim
   | `lib/file` + `SRCMBR` | The `*CURRENT` block of that binder source; every `*PRV` block is kept | From the binder source | A binder source member |
 
   With `*NONE`, programs that use the mock must be bound after `IMOQBUILD` (they bind to the mock itself), and the names you give `PROC` are the exact export symbols, which are usually uppercase. Use `*RTV` when the code under test is already compiled against the real service program and you don't want to rebind it.
+
+
+### Data structures and arrays
+
+A data structure or an array parameter is passed as one block of storage, so describe it as one `(*CHAR size)`. Then describe what's inside with `IMOQFIELD`, and address the subfields by name:
+
+```
+IMOQPROC   OBJ(ORDSRV) PROC(ADD_ORDER) RTNTYPE(*CHAR 12) +
+             PARMS((*CHAR 28 *CONST) (*CHAR 60 *CONST))
+
+IMOQFIELD  OBJ(ORDSRV) PROC(ADD_ORDER) PARM(1) +
+             FIELDS((ITEM 1 *CHAR 5) (QTY *NEXT *PACKED 7 0) +
+                    (PRICE *NEXT *ZONED 9 2) (SHIPPED *NEXT *DATE))
+IMOQFIELD  OBJ(ORDSRV) PROC(ADD_ORDER) PARM(2) +
+             FIELDS((AMT 1 *PACKED 9 2 12))
+IMOQFIELD  OBJ(ORDSRV) PROC(ADD_ORDER) PARM(0) +
+             FIELDS((STATUS 1 *CHAR 2) (TOTAL *NEXT *PACKED 11 2))
+```
+
+- **Each field is `(name position type length decimals [elements])`.** The position is 1-based, like RPG's `POS()`, and `*NEXT` means right after the previous field. The type and length are written as in `PARMS`.
+- **An array is a field with a number of elements:** `(AMT 1 *PACKED 9 2 12)` is `packed(9:2) dim(12)`. An array parameter that isn't in a data structure is one `(*CHAR size)` with a single array field.
+- **Parameter 0 is the return value**, for a procedure that returns a data structure. Declare its `RTNTYPE` as `(*CHAR size)`.
+- **Program mocks** take `IMOQFIELD` without `PROC`.
+- **Declaring a parameter's fields again replaces them.** Running `IMOQPROC` or `IMOQPGM` again drops all of that procedure's fields.
+
+To use a subfield, add its name as the last element of an `ARGS` or `SETPARM` entry, or use `FIELD()` on `IMOQGETARG`. An array element is `NAME(i)`, and it needs quotes in a command because of its parentheses:
+
+```
+IMOQWHEN   OBJ(ORDSRV) PROC(ADD_ORDER) +
+             ARGS((1 *EQ A0001 ITEM) (1 *GT 10 QTY) (2 *GT 1000 'AMT(12)')) +
+             SETPARM((0 OK STATUS) (0 '99.50' TOTAL))
+IMOQVERIFY OBJ(ORDSRV) PROC(ADD_ORDER) ARGS((1 *EQ A0001 ITEM)) TIMES(*ONCE)
+IMOQGETARG OBJ(ORDSRV) PROC(ADD_ORDER) PARM(1) FIELD(QTY) RTNVAL(&QTY)
+```
+
+In the RPG API, the field is an optional last argument, and no quotes are needed:
+
+```rpgle
+imoq_with(h : 2 : IMOQ_GT : 1000 : 'AMT(12)');
+imoq_setParm(h : 0 : 99.50 : 'TOTAL');
+qty = imoq_argNum('ORDSRV' : 'ADD_ORDER' : 1 : 1 : 'QTY');
+```
+
+Things to know:
+- **Every subfield is compared by its own type,** so packed and zoned subfields compare as numbers, and dates as dates.
+- **Subfields are recorded when the call arrives.** Declare the fields before the code under test runs; calls made earlier have only the whole parameter.
+- **A data structure return value is built field by field.** Fields that no `SETPARM` sets start out blank, or zero for numbers (`0001-01-01` for dates). With `RETURN`, the whole value is set first and the fields go on top.
+- **Positions are the ones you declare.** iMoq doesn't know about `ALIGN` or padding, so copy the positions of an aligned data structure from the compile listing.
+
+The [EXFIELD example](EXAMPLES.md#exfield-data-structures-arrays-and-data-structure-returns) shows all of this, in both forms.
 
 ---
 
@@ -429,7 +479,7 @@ IMOQNOMORE                    /* every recorded call has been verified */
 |---|---|
 | `IMOQVERIFY` | Sends **IMQ0200** when the count of matching calls is wrong. On success, the matching calls are marked verified. |
 | `IMOQNOMORE` | Sends **IMQ0201** listing any call no successful `IMOQVERIFY` covered. Use it to catch surprise interactions. |
-| `IMOQGETARG` | Returns one captured argument to a CL variable (`*CHAR 256`). Use `CALL(*FIRST\|*LAST\|n)`. |
+| `IMOQGETARG` | Returns one captured argument to a CL variable (`*CHAR 256`). Use `CALL(*FIRST\|*LAST\|n)`, and `FIELD(name)` for a [subfield](#data-structures-and-arrays). |
 | `IMOQCOUNT` | Returns the number of matching calls to a CL variable (`*DEC 10 0`). |
 
 ### Capturing arguments
@@ -483,11 +533,13 @@ assert(imoq_calledOnce(v) : imoq_lastError());
 | Procedure | What it does | Command equivalent |
 |---|---|---|
 | `h = imoq_when(obj : proc)` | Starts a stub and returns its handle. Omit `proc` for a program mock. The stub answers calls straight away | `IMOQWHEN OBJ PROC` |
-| `imoq_with(h : parmNo : matcher : value)` | Adds an argument matcher. `IMOQ_ANY`, `IMOQ_BLANK`, `IMOQ_OMIT` and `IMOQ_NOTPASSED` take no value | `ARGS((n matcher value))` |
+| `imoq_with(h : parmNo : matcher : value : field)` | Adds an argument matcher. `IMOQ_ANY`, `IMOQ_BLANK`, `IMOQ_OMIT` and `IMOQ_NOTPASSED` take no value. The optional `field` matches a [subfield](#data-structures-and-arrays) | `ARGS((n matcher value field))` |
 | `imoq_returns(h : value)` | Adds a return value. Call it again for a series: one value per call, and the last one repeats | `RETURN(v …)` |
-| `imoq_setParm(h : parmNo : value)` | Fills an output parameter | `SETPARM((n value))` |
+| `imoq_setParm(h : parmNo : value : field)` | Fills an output parameter, or with `field` one of its subfields. Parameter 0 with a field sets a subfield of a data structure return value | `SETPARM((n value field))` |
 | `imoq_throws(h : msgId : msgDta : msgf : msgfLib)` | Sends an escape message instead of answering. `msgId` `IMOQ_MOCK` sends **IMQ0101**; for another message ID, pass its message file (`msgfLib` defaults to `*LIBL`) | `THROW(…)` |
 | `imoq_times(h : n)` | Answers only `n` calls (default `IMOQ_ALWAYS`) | `TIMES(n)` |
+
+On a compiler without `OVERLOAD` (before 7.4 TR5), `/define IMOQ_NO_OVERLOAD` before copying `IMOQ_H`, and call the typed procedures directly: `imoq_withChar`, `imoq_withNum`, `imoq_returnsDate` and so on.
 
 Matcher constants are `IMOQ_EQ`, `IMOQ_NE`, `IMOQ_GT`, `IMOQ_GE`, `IMOQ_LT`, `IMOQ_LE`, `IMOQ_LIKE`, `IMOQ_BLANK`, `IMOQ_ANY`, `IMOQ_OMIT` and `IMOQ_NOTPASSED`. They work exactly like the command matchers in [Stubbing recipes](#6-stubbing-recipes).
 
@@ -510,8 +562,8 @@ A successful check marks the calls it matched as verified, as `IMOQVERIFY` does.
 
 | Procedure | Returns |
 |---|---|
-| `imoq_arg(obj : proc : call : parm)` | The argument as text; `*OMIT` or `*NOTPASSED` for missing ones |
-| `imoq_argNum` · `imoq_argDate` · `imoq_argTime` · `imoq_argTimestamp` · `imoq_argInd` | The argument as a `packed(31:9)`, date, time, timestamp or indicator |
+| `imoq_arg(obj : proc : call : parm : field)` | The argument as text; `*OMIT` or `*NOTPASSED` for missing ones. `field` (optional) reads a subfield |
+| `imoq_argNum` · `imoq_argDate` · `imoq_argTime` · `imoq_argTimestamp` · `imoq_argInd` | The argument (or subfield) as a `packed(31:9)`, date, time, timestamp or indicator |
 | `imoq_argPassed(obj : proc : call : parm)` | `*off` if the argument was `*OMIT` or not passed |
 | `imoq_count(obj : proc)` | The number of recorded calls, or `-1` if the mock or procedure is unknown |
 
@@ -656,7 +708,8 @@ To test that code, call it directly from the driver job.
 
 ### Parameters that can't be described exactly
 
-- **Data structures and arrays** are described as one `*CHAR` of their total size. Matchers, `SETPARM` and captured values then treat the whole thing as text, which only makes sense when every subfield or element is character. With packed, zoned or binary subfields, you can still count calls and use `*ANY`, `*OMIT` and `*NOTPASSED`.
+- **Arrays of data structures** (`likeds(x) dim(n)`) and data structures nested inside data structures can't be described with `IMOQFIELD`, which only repeats a single field. Declare the elements you need as separate fields at their own positions.
+- **Aligned data structures:** iMoq uses the positions you declare and doesn't add `ALIGN` padding.
 - **`*VARCHAR` passed `*VALUE`** isn't supported.
 - **Sizes:** up to 64 parameters, command values of at most 256 characters (1,024 through the RPG API), and captured values cut at 1,024 characters. See [Limits](#limits) for the full list.
 
@@ -682,11 +735,12 @@ The mock is identified by `OBJ(name)`. Service program mocks also take `PROC(exp
 | `IMOQPGM` | `OBJ` · `PARMS((type len dec) …)` · `BEHAVIOR(*LOOSE\|*STRICT)` · `LIB(QTEMP\|name)` | `mock(X.class)` / `new Mock<X>(behavior)` |
 | `IMOQSRVPGM` | `OBJ` · `BEHAVIOR` · `SRCFILE(*NONE\|*RTV\|lib/file)` · `SRCMBR(*OBJ\|name)` · `SIGNATURE(*GEN\|'text')` · `LIB(QTEMP\|name)` | `mock(X.class)` |
 | `IMOQPROC` | `OBJ` · `PROC` · `RTNTYPE(type len dec)` · `PARMS((type len dec\|passing [passing]) …)` | – |
+| `IMOQFIELD` | `OBJ` · `PROC` · `PARM(n\|0)` · `FIELDS((name pos\|*NEXT type len dec [elements]) …)` | – |
 | `IMOQBUILD` | `OBJ` | – |
-| `IMOQWHEN` | `OBJ` · `PROC(*PGM\|name)` · `ARGS((n matcher value) …)` · `RETURN(v …)` · `SETPARM((n value) …)` · `THROW(msgid msgf lib data)` · `TIMES(*ALWAYS\|n)` | `when().thenReturn()/thenThrow()` / `Setup().Returns()/Callback()/Throws()` |
+| `IMOQWHEN` | `OBJ` · `PROC(*PGM\|name)` · `ARGS((n matcher value [field]) …)` · `RETURN(v …)` · `SETPARM((n value [field]) …)` · `THROW(msgid msgf lib data)` · `TIMES(*ALWAYS\|n)` | `when().thenReturn()/thenThrow()` / `Setup().Returns()/Callback()/Throws()` |
 | `IMOQVERIFY` | `OBJ` · `PROC` · `ARGS` · `TIMES(*ONCE\|*NEVER\|*EXACTLY n\|*ATLEAST n\|*ATMOST n)` | `verify(m, times(n))` / `Verify(Times)` |
 | `IMOQNOMORE` | `OBJ(*ALL\|name)` | `verifyNoMoreInteractions()` / `VerifyNoOtherCalls()` |
-| `IMOQGETARG` | `OBJ` · `PARM(n)` · `RTNVAL(&char256)` · `PROC` · `CALL(*LAST\|*FIRST\|n)` · CL programs only | `ArgumentCaptor` |
+| `IMOQGETARG` | `OBJ` · `PARM(n)` · `RTNVAL(&char256)` · `PROC` · `CALL(*LAST\|*FIRST\|n)` · `FIELD(name)` · CL programs only | `ArgumentCaptor` |
 | `IMOQCOUNT` | `OBJ` · `RTNVAL(&dec10)` · `PROC` · `ARGS` · CL programs only | – |
 | `IMOQRESET` | `OBJ(*ALL\|name)` · `SCOPE(*ALL\|*CALLS\|*STUBS)` | `reset()` / `clearInvocations()` |
 | `IMOQRMV` | `OBJ(*ALL\|name)` | – |
@@ -706,6 +760,7 @@ From RPG, the same stubbing and verification is available as the [RPG API](#8-wr
 ### Limits
 
 - Up to 64 parameters per program or procedure, 64 `ARGS`/`SETPARM` entries and 32 `RETURN` values. Command values are at most 256 characters; RPG API values up to 1,024.
+- Up to 64 fields per parameter, 999 elements per array field and 256 fields per procedure. Up to 2,000 subfield values are recorded per call.
 - Captured argument text is cut at 1,024 characters. Dates and times use ISO format.
 - `*VARCHAR` can't be passed `*VALUE`. A data export is mocked as `char(n)` storage of the real size.
 - Each stub call runs a few SQL statements against QTEMP. That's fast enough for unit tests, but mocks aren't meant for performance runs.

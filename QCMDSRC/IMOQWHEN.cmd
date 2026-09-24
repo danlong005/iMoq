@@ -24,10 +24,14 @@
                           *BLANK *OMIT *NOTPASSED) PROMPT('Matcher')
              ELEM       TYPE(*CHAR) LEN(256) VARY(*YES *INT2) +
                           CASE(*MIXED) DFT(' ') PROMPT('Value')
- SDEF:       ELEM       TYPE(*INT2) RANGE(1 64) MIN(1) +
-                          PROMPT('Parameter number')
+             ELEM       TYPE(*CHAR) LEN(40) DFT(' ') +
+                          PROMPT('Field (IMOQFIELD), or NAME(i)')
+ SDEF:       ELEM       TYPE(*INT2) RANGE(0 64) MIN(1) +
+                          PROMPT('Parameter (0 = return value)')
              ELEM       TYPE(*CHAR) LEN(256) VARY(*YES *INT2) +
                           CASE(*MIXED) MIN(1) PROMPT('Value')
+             ELEM       TYPE(*CHAR) LEN(40) DFT(' ') +
+                          PROMPT('Field (IMOQFIELD), or NAME(i)')
  TDEF:       ELEM       TYPE(*CHAR) LEN(7) DFT(*NONE) +
                           SPCVAL((*NONE) (*MOCK)) +
                           PROMPT('Message identifier')

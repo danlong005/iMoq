@@ -15,6 +15,10 @@ dcl-c LOWER 'abcdefghijklmnopqrstuvwxyz';
 dcl-c UPPER 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 dcl-c MAXCALLS 5000;
 dcl-c MAXSTUBS 500;
+dcl-c MAXFIELDS 256;         // declared subfields per procedure
+dcl-c MAXFVALS 2000;         // subfield values recorded per call
+dcl-c NAMECHARS 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_#$@';
+dcl-c DIGITS '0123456789';
 
 dcl-ds psds psds qualified;
   excType char(3) pos(40);
@@ -35,6 +39,16 @@ dcl-ds target_t qualified template;
   defs likeds(imoq_def_t) dim(64);
   rtnDef likeds(imoq_def_t);
   hasRtn ind;
+end-ds;
+
+// Subfields declared with IMOQFIELD for one procedure
+dcl-ds fields_t qualified template;
+  n int(10);
+  parm int(10) dim(MAXFIELDS);
+  name varchar(30) dim(MAXFIELDS);
+  pos int(10) dim(MAXFIELDS);
+  dim int(10) dim(MAXFIELDS);
+  def likeds(imoq_def_t) dim(MAXFIELDS);
 end-ds;
 
 dcl-s gTablesOk ind;
@@ -149,18 +163,24 @@ dcl-proc ensureTables;
        + 'RTNCNT INT NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_SARG (STUBID INT NOT NULL, '
        + 'PARMNO SMALLINT NOT NULL, MATCHER CHAR(10) NOT NULL, '
-       + 'VAL VARCHAR(1024) NOT NULL)');
+       + 'VAL VARCHAR(1024) NOT NULL, FIELD VARCHAR(40) NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_SRTN (STUBID INT NOT NULL, '
        + 'SEQ INT NOT NULL, VAL VARCHAR(1024) NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_SSET (STUBID INT NOT NULL, '
-       + 'PARMNO SMALLINT NOT NULL, VAL VARCHAR(1024) NOT NULL)');
+       + 'PARMNO SMALLINT NOT NULL, VAL VARCHAR(1024) NOT NULL, '
+       + 'FIELD VARCHAR(40) NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_CALL (CALLID INT NOT NULL, '
        + 'OBJ CHAR(10) NOT NULL, PROC VARCHAR(4096) NOT NULL, '
        + 'PARMCNT INT NOT NULL, STUBID INT NOT NULL, '
        + 'VERIFIED CHAR(1) NOT NULL, TS TIMESTAMP NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_CARG (CALLID INT NOT NULL, '
        + 'PARMNO SMALLINT NOT NULL, STATE CHAR(1) NOT NULL, '
-       + 'VAL VARCHAR(1024) NOT NULL)');
+       + 'VAL VARCHAR(1024) NOT NULL, FIELD VARCHAR(40) NOT NULL)');
+  runDdl('CREATE TABLE QTEMP.IMOQ_FLD (OBJ CHAR(10) NOT NULL, '
+       + 'PROC VARCHAR(4096) NOT NULL, PARMNO SMALLINT NOT NULL, '
+       + 'SEQ INT NOT NULL, NAME VARCHAR(30) NOT NULL, POS INT NOT NULL, '
+       + 'TYPE CHAR(10) NOT NULL, LEN INT NOT NULL, DEC INT NOT NULL, '
+       + 'DIM INT NOT NULL)');
   gTablesOk = *on;
 end-proc;
 
@@ -174,6 +194,7 @@ dcl-proc dropTables;
   runDdl('DROP TABLE QTEMP.IMOQ_SSET');
   runDdl('DROP TABLE QTEMP.IMOQ_CALL');
   runDdl('DROP TABLE QTEMP.IMOQ_CARG');
+  runDdl('DROP TABLE QTEMP.IMOQ_FLD');
   runDdl('DROP ALIAS QTEMP.IMOQ_SRCW');
   runDdl('DROP ALIAS QTEMP.IMOQ_BNDR');
   gTablesOk = *off;
@@ -211,6 +232,7 @@ dcl-proc forgetObj;
   deleteStubs(obj);
   deleteCalls(obj);
   exec sql delete from qtemp.imoq_sig where obj = :obj or :obj = '*ALL';
+  exec sql delete from qtemp.imoq_fld where obj = :obj or :obj = '*ALL';
   exec sql delete from qtemp.imoq_proc where obj = :obj or :obj = '*ALL';
   exec sql delete from qtemp.imoq_obj where obj = :obj or :obj = '*ALL';
 end-proc;
@@ -560,10 +582,154 @@ dcl-proc openTarget;
 end-proc;
 
 // ==================================================================
-// Matchers: ARGS((parmNo matcher value) ...)
+// Subfield references: NAME, or NAME(i) for an array element
+// ==================================================================
+dcl-proc imoq_parseField export;
+  dcl-pi *n ind;
+    text varchar(64) const;
+    field varchar(40);
+    msg varchar(256);
+  end-pi;
+  dcl-s name varchar(64);
+  dcl-s idx varchar(64);
+  dcl-s q int(10);
+  dcl-s i int(10);
+
+  field = '';
+  msg = '''' + %trim(text) + ''' is not a field name. Use NAME, or '
+      + 'NAME(i) for an array element';
+  name = %xlate(LOWER : UPPER : %trim(text));
+  if name = '';
+    msg = '';
+    return *on;
+  endif;
+  q = %scan('(' : name);
+  if q > 0;
+    if %subst(name : %len(name) : 1) <> ')' or q < 2
+       or q > %len(name) - 2;
+      return *off;
+    endif;
+    idx = %trim(%subst(name : q + 1 : %len(name) - q - 1));
+    name = %trim(%subst(name : 1 : q - 1));
+    if idx = '' or %len(idx) > 3 or %check(DIGITS : idx) > 0;
+      return *off;
+    endif;
+    i = %int(idx);
+    if i < 1;
+      msg = 'Array elements are numbered from 1';
+      return *off;
+    endif;
+  endif;
+  if %len(name) > 30 or %check(NAMECHARS : name) > 0;
+    return *off;
+  endif;
+  field = name;
+  if q > 0;
+    field += '(' + %char(i) + ')';
+  endif;
+  msg = '';
+  return *on;
+end-proc;
+
+// NAME(2) -> NAME and 2; NAME -> NAME and 0
+dcl-proc splitField;
+  dcl-pi *n;
+    field varchar(40) const;
+    name varchar(30);
+    idx int(10);
+  end-pi;
+  dcl-s q int(10);
+  q = %scan('(' : field);
+  if q = 0;
+    name = field;
+    idx = 0;
+    return;
+  endif;
+  name = %subst(field : 1 : q - 1);
+  idx = %int(%subst(field : q + 1 : %len(field) - q - 1));
+end-proc;
+
+// 2, 2.QTY or 0.TOTAL, as written in commands
+dcl-proc refText;
+  dcl-pi *n varchar(48);
+    parmNo int(10) const;
+    field varchar(40) const;
+  end-pi;
+  if field = '';
+    return %char(parmNo);
+  endif;
+  return %char(parmNo) + '.' + field;
+end-proc;
+
+// Layout and byte offset of a declared subfield (element)
+dcl-proc findField;
+  dcl-pi *n ind;
+    obj char(10) const;
+    proc varchar(4096) const;
+    parmNo int(10) const;
+    field varchar(40) const;
+    def likeds(imoq_def_t);
+    offset int(10);
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-s name varchar(30);
+  dcl-s idx int(10);
+  dcl-s p5 int(5);
+  dcl-s pos int(10);
+  dcl-s type char(10);
+  dcl-s len int(10);
+  dcl-s dec int(10);
+  dcl-s dim int(10);
+  dcl-s what varchar(200);
+
+  clear def;
+  offset = 0;
+  splitField(field : name : idx);
+  p5 = parmNo;
+  what = 'Field ' + name + ' of ' + label(obj : proc) + ' parameter '
+       + %char(parmNo);
+  exec sql select pos, type, len, dec, dim
+             into :pos, :type, :len, :dec, :dim
+             from qtemp.imoq_fld
+            where obj = :obj and proc = :proc and parmno = :p5
+              and name = :name;
+  if sqlcode <> 0;
+    setErr(err : 'IMQ0014' : what + ' is not declared. Declare it with '
+         + 'IMOQFIELD');
+    return *off;
+  endif;
+  def.type = type;
+  def.len = len;
+  def.dec = dec;
+  def.passing = '*REF';
+  if dim = 0 and idx > 0;
+    setErr(err : 'IMQ0014' : what + ' is not an array; leave out (' +
+           %char(idx) + ')');
+    return *off;
+  endif;
+  if dim > 0 and idx = 0;
+    setErr(err : 'IMQ0014' : what + ' is an array of ' + %char(dim)
+         + '; name an element, such as ' + name + '(1)');
+    return *off;
+  endif;
+  if idx > dim;
+    setErr(err : 'IMQ0014' : what + ' has ' + %char(dim)
+         + ' elements, not ' + %char(idx));
+    return *off;
+  endif;
+  if idx = 0;
+    idx = 1;
+  endif;
+  offset = pos - 1 + (idx - 1) * imoq_byteSize(def);
+  return *on;
+end-proc;
+
+// ==================================================================
+// Matchers: ARGS((ref matcher value) ...)
 // ==================================================================
 
-// Unpack the ARGS list of a command
+// Unpack the ARGS list of a command: parameter (int2), matcher (10),
+// value (VARY 256), field (40)
 dcl-proc unpackMatchers;
   dcl-pi *n ind;
     blob pointer value;
@@ -573,6 +739,7 @@ dcl-proc unpackMatchers;
   end-pi;
   dcl-s i int(10);
   dcl-s e pointer;
+  dcl-s msg varchar(256);
 
   clear m;
   nM = lstCount(blob);
@@ -585,6 +752,10 @@ dcl-proc unpackMatchers;
     m(i).parmNo = int2At(e + 2);
     m(i).matcher = charAt(e + 4 : 10);
     m(i).val = varyText(e + 14 : 256);
+    if not imoq_parseField(charAt(e + 272 : 40) : m(i).field : msg);
+      setErr(err : 'IMQ0014' : 'ARGS entry ' + %char(i) + ': ' + msg);
+      return *off;
+    endif;
   endfor;
   return *on;
 end-proc;
@@ -598,8 +769,15 @@ dcl-proc checkMatcher;
     err likeds(imoq_err_t);
   end-pi;
   dcl-s msg varchar(256);
+  dcl-ds d likeds(imoq_def_t);
+  dcl-s off int(10);
 
   m.matcher = %xlate(LOWER : UPPER : m.matcher);
+  if m.parmNo = 0;
+    setErr(err : 'IMQ0014' : what + ': parameter 0 is the return value, '
+         + 'which arguments can''t be matched against');
+    return *off;
+  endif;
   if m.parmNo < 1 or m.parmNo > IMOQ_MAXP;
     setErr(err : 'IMQ0014' : what + ': parameter number must be 1 to 64');
     return *off;
@@ -609,19 +787,32 @@ dcl-proc checkMatcher;
          + ' is not a valid matcher');
     return *off;
   endif;
-  if m.matcher = '*ANY' or m.matcher = '*OMIT'
-     or m.matcher = '*NOTPASSED';
-    return *on;
+
+  if m.field <> '';
+    if not findField(tgt.obj : tgt.proc : m.parmNo : m.field : d : off
+                     : err);
+      setErr(err : 'IMQ0014' : what + ': ' + %trimr(err.text));
+      return *off;
+    endif;
+  else;
+    if m.matcher = '*ANY' or m.matcher = '*OMIT'
+       or m.matcher = '*NOTPASSED';
+      return *on;
+    endif;
+    if m.parmNo > tgt.nDefs;
+      setErr(err : 'IMQ0014' : what + ': parameter ' + %char(m.parmNo)
+           + ' of ' + tgt.lbl + ' is not declared. '
+           + 'Declare its layout with PARMS so values can be compared');
+      return *off;
+    endif;
+    d = tgt.defs(m.parmNo);
   endif;
-  if m.parmNo > tgt.nDefs;
-    setErr(err : 'IMQ0014' : what + ': parameter ' + %char(m.parmNo)
-         + ' of ' + tgt.lbl + ' is not declared. '
-         + 'Declare its layout with PARMS so values can be compared');
-    return *off;
-  endif;
-  if imoq_isNumeric(tgt.defs(m.parmNo).type)
-     and m.matcher <> '*BLANK' and m.matcher <> '*LIKE';
-    if not canEncode(tgt.defs(m.parmNo) : m.val : msg);
+
+  if imoq_isNumeric(d.type)
+     and m.matcher <> '*BLANK' and m.matcher <> '*LIKE'
+     and m.matcher <> '*ANY' and m.matcher <> '*OMIT'
+     and m.matcher <> '*NOTPASSED';
+    if not canEncode(d : m.val : msg);
       setErr(err : 'IMQ0014' : what + ': ' + msg);
       return *off;
     endif;
@@ -659,7 +850,7 @@ dcl-proc describeMatchers;
     if i > 1;
       t += ', ';
     endif;
-    t += %char(m(i).parmNo) + ' ' + %trim(m(i).matcher);
+    t += refText(m(i).parmNo : m(i).field) + ' ' + %trim(m(i).matcher);
     if m(i).matcher <> '*ANY' and m(i).matcher <> '*OMIT'
        and m(i).matcher <> '*NOTPASSED' and m(i).matcher <> '*BLANK';
       t += ' ''' + %trimr(m(i).val) + '''';
@@ -671,6 +862,8 @@ end-proc;
 // ==================================================================
 // Recorded calls
 // ==================================================================
+
+// Whole-parameter arguments of a call (subfield rows are left out)
 dcl-proc loadCallArgs;
   dcl-pi *n;
     callId int(10) const;
@@ -687,7 +880,7 @@ dcl-proc loadCallArgs;
   nArgs = 0;
   exec sql declare cCarg cursor for
     select parmno, state, val from qtemp.imoq_carg
-     where callid = :callId order by parmno;
+     where callid = :callId and field = '' order by parmno;
   exec sql open cCarg;
   dow sqlcode = 0;
     exec sql fetch next from cCarg into :parmNo, :state, :v;
@@ -703,6 +896,34 @@ dcl-proc loadCallArgs;
     endif;
   enddo;
   exec sql close cCarg;
+end-proc;
+
+// A recorded subfield value: state P, or the whole parameter's
+// state (O, N) when it wasn't recorded
+dcl-proc loadCallField;
+  dcl-pi *n;
+    callId int(10) const;
+    parmNo int(10) const;
+    field varchar(40) const;
+    state char(1);
+    val varchar(1024);
+  end-pi;
+  dcl-s p5 int(5);
+  dcl-s fld varchar(40);
+  p5 = parmNo;
+  fld = field;
+  val = '';
+  exec sql select state, val into :state, :val from qtemp.imoq_carg
+            where callid = :callId and parmno = :p5 and field = :fld;
+  if sqlcode = 0;
+    return;
+  endif;
+  state = 'N';
+  exec sql select state into :state from qtemp.imoq_carg
+            where callid = :callId and parmno = :p5 and field = '';
+  if sqlcode <> 0 or state = 'P';
+    state = 'N';
+  endif;
 end-proc;
 
 dcl-proc describeCall;
@@ -747,14 +968,17 @@ dcl-proc callMatches;
     callId int(10) const;
     m likeds(imoq_matcher_t) dim(64) const;
     nM int(10) const;
-    defs likeds(imoq_def_t) dim(64) const;
-    nDefs int(10) const;
+    tgt likeds(target_t) const;
   end-pi;
   dcl-s st char(1) dim(64);
   dcl-s vals varchar(1024) dim(64);
   dcl-s nArgs int(10);
   dcl-s i int(10);
   dcl-ds d likeds(imoq_def_t);
+  dcl-ds err likeds(imoq_err_t);
+  dcl-s off int(10);
+  dcl-s fst char(1);
+  dcl-s fval varchar(1024);
 
   if nM = 0;
     return *on;
@@ -763,8 +987,17 @@ dcl-proc callMatches;
   for i = 1 to nM;
     clear d;
     d.type = '*CHAR';
-    if m(i).parmNo <= nDefs;
-      d = defs(m(i).parmNo);
+    if m(i).field <> '';
+      findField(tgt.obj : tgt.proc : m(i).parmNo : m(i).field : d : off
+                : err);
+      loadCallField(callId : m(i).parmNo : m(i).field : fst : fval);
+      if not imoq_match(m(i).matcher : m(i).val : fst : fval : d);
+        return *off;
+      endif;
+      iter;
+    endif;
+    if m(i).parmNo <= tgt.nDefs;
+      d = tgt.defs(m(i).parmNo);
     endif;
     if not imoq_match(m(i).matcher : m(i).val : st(m(i).parmNo)
                       : vals(m(i).parmNo) : d);
@@ -1023,6 +1256,7 @@ dcl-proc imoq_cl_defProc export;
   endfor;
 
   exec sql delete from qtemp.imoq_sig where obj = :obj and proc = :proc;
+  exec sql delete from qtemp.imoq_fld where obj = :obj and proc = :proc;
   if hasRtn;
     insertSig(obj : proc : 0 : rtnDef);
   endif;
@@ -1033,6 +1267,153 @@ dcl-proc imoq_cl_defProc export;
             where obj = :obj and proc = :proc;
   exec sql update qtemp.imoq_obj set built = 'N' where obj = :obj;
   err.text = proc;
+end-proc;
+
+// IMOQFIELD ---------------------------------------------------------
+// FIELDS entries: name (30), position (int4, 0 = *NEXT), type (10),
+// length (int4), decimals (int4), dim (int4, 0 = not an array)
+dcl-proc imoq_cl_defField export;
+  dcl-pi *n;
+    obj char(10) const;
+    procVary char(258);
+    parmNo int(5) const;
+    fields char(1) options(*varsize);
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-ds tgt likeds(target_t);
+  dcl-ds parent likeds(imoq_def_t);
+  dcl-ds fd likeds(imoq_def_t) dim(64);
+  dcl-s names varchar(30) dim(64);
+  dcl-s poss int(10) dim(64);
+  dcl-s dims int(10) dim(64);
+  dcl-s p pointer;
+  dcl-s e pointer;
+  dcl-s n int(10);
+  dcl-s i int(10);
+  dcl-s j int(10);
+  dcl-s nm varchar(30);
+  dcl-s pos int(10);
+  dcl-s dim int(10);
+  dcl-s size int(10);
+  dcl-s parentSize int(10);
+  dcl-s last int(10);
+  dcl-s nextPos int(10) inz(1);
+  dcl-s what varchar(60);
+  dcl-s place varchar(80);
+  dcl-s m256 varchar(256);
+  dcl-s proc varchar(4096);
+  dcl-s p5 int(5);
+  dcl-s seq int(10);
+  dcl-s type char(10);
+  dcl-s len int(10);
+  dcl-s dec int(10);
+
+  clearErr(err);
+  ensureTables();
+  if not openTarget(obj : varyText(%addr(procVary) : 256) : tgt : err);
+    return;
+  endif;
+  if parmNo = 0;
+    place = tgt.lbl + ' return value';
+    if not tgt.hasRtn;
+      setErr(err : 'IMQ0014' : tgt.lbl + ' has no declared return value. '
+           + 'Declare RTNTYPE with IMOQPROC first');
+      return;
+    endif;
+    parent = tgt.rtnDef;
+  else;
+    place = tgt.lbl + ' parameter ' + %char(parmNo);
+    if parmNo > tgt.nDefs;
+      setErr(err : 'IMQ0014' : 'Parameter ' + %char(parmNo) + ' of '
+           + tgt.lbl + ' is not declared. Declare it with PARMS first');
+      return;
+    endif;
+    parent = tgt.defs(parmNo);
+  endif;
+  if parent.type <> '*CHAR';
+    setErr(err : 'IMQ0014' : place + ' is ' + imoq_rpgType(parent)
+         + '. Declare a data structure or array as (*CHAR size) to '
+         + 'give it fields');
+    return;
+  endif;
+  parentSize = imoq_byteSize(parent);
+
+  p = %addr(fields);
+  n = lstCount(p);
+  if n < 1 or n > %elem(names);
+    setErr(err : 'IMQ0014' : 'Declare 1 to 64 fields');
+    return;
+  endif;
+  for i = 1 to n;
+    e = lstEntry(p : i);
+    nm = %xlate(LOWER : UPPER : %trim(charAt(e + 2 : 30)));
+    what = 'FIELDS entry ' + %char(i) + ' (' + nm + ')';
+    if nm = '' or %check(NAMECHARS : nm) > 0;
+      setErr(err : 'IMQ0014' : what + ': not a valid field name');
+      return;
+    endif;
+    for j = 1 to i - 1;
+      if names(j) = nm;
+        setErr(err : 'IMQ0014' : what + ': ' + nm + ' is declared twice');
+        return;
+      endif;
+    endfor;
+    pos = int4At(e + 32);
+    clear fd(i);
+    fd(i).type = %xlate(LOWER : UPPER : charAt(e + 36 : 10));
+    fd(i).len = int4At(e + 46);
+    fd(i).dec = int4At(e + 50);
+    fd(i).passing = '*REF';
+    dim = int4At(e + 54);
+    if not imoq_normDef(fd(i) : m256);
+      setErr(err : 'IMQ0014' : what + ': ' + m256);
+      return;
+    endif;
+    if dim < 0 or dim > 999;
+      setErr(err : 'IMQ0014' : what + ': DIM must be 0 to 999');
+      return;
+    endif;
+    if pos = 0;
+      pos = nextPos;
+    endif;
+    size = imoq_byteSize(fd(i));
+    last = pos - 1 + size;
+    if dim > 0;
+      last = pos - 1 + size * dim;
+    endif;
+    if pos < 1 or last > parentSize;
+      setErr(err : 'IMQ0014' : what + ': positions ' + %char(pos) + ' to '
+           + %char(last) + ' don''t fit in ' + place + ', which is '
+           + %char(parentSize) + ' bytes');
+      return;
+    endif;
+    names(i) = nm;
+    poss(i) = pos;
+    dims(i) = dim;
+    nextPos = last + 1;
+  endfor;
+
+  // replace the parameter's fields
+  proc = tgt.proc;
+  p5 = parmNo;
+  exec sql delete from qtemp.imoq_fld
+            where obj = :obj and proc = :proc and parmno = :p5;
+  for i = 1 to n;
+    seq = i;
+    nm = names(i);
+    pos = poss(i);
+    type = fd(i).type;
+    len = fd(i).len;
+    dec = fd(i).dec;
+    dim = dims(i);
+    exec sql insert into qtemp.imoq_fld
+      values(:obj, :proc, :p5, :seq, :nm, :pos, :type, :len, :dec, :dim);
+    if sqlcode < 0;
+      setErr(err : 'IMQ0015' : sqlFailText('Save fields'));
+      return;
+    endif;
+  endfor;
+  err.text = %char(n) + ' field(s) declared for ' + place;
 end-proc;
 
 // IMOQBUILD ---------------------------------------------------------
@@ -1100,6 +1481,7 @@ dcl-proc imoq_cl_when export;
   dcl-s p pointer;
   dcl-s e pointer;
   dcl-s i int(10);
+  dcl-s msg varchar(256);
 
   clearErr(err);
   clear stub;
@@ -1133,6 +1515,10 @@ dcl-proc imoq_cl_when export;
     e = lstEntry(p : i);
     stub.setNo(i) = int2At(e + 2);
     stub.setVal(i) = varyText(e + 4 : 256);
+    if not imoq_parseField(charAt(e + 262 : 40) : stub.setFld(i) : msg);
+      setErr(err : 'IMQ0014' : 'SETPARM entry ' + %char(i) + ': ' + msg);
+      return;
+    endif;
   endfor;
 
   // THROW
@@ -1173,6 +1559,10 @@ dcl-proc imoq_stubSave export;
   dcl-s mt char(10);
   dcl-s v varchar(1024);
   dcl-s m256 varchar(256);
+  dcl-s fld varchar(40);
+  dcl-s what varchar(60);
+  dcl-ds fd likeds(imoq_def_t);
+  dcl-s off int(10);
 
   clearErr(err);
   ensureTables();
@@ -1213,18 +1603,40 @@ dcl-proc imoq_stubSave export;
     return *off;
   endif;
   for i = 1 to stub.nSet;
-    if stub.setNo(i) < 1 or stub.setNo(i) > tgt.nDefs;
-      setErr(err : 'IMQ0014' : 'SETPARM entry ' + %char(i) + ': parameter '
-           + %char(stub.setNo(i)) + ' of ' + tgt.lbl + ' is not declared');
+    what = 'SETPARM entry ' + %char(i);
+    if stub.setNo(i) = 0;
+      if stub.setFld(i) = '';
+        setErr(err : 'IMQ0014' : what + ': parameter 0 is the return '
+             + 'value; set all of it with RETURN, or one of its fields '
+             + 'with 0.FIELD');
+        return *off;
+      endif;
+      if not tgt.hasRtn;
+        setErr(err : 'IMQ0014' : what + ': ' + tgt.lbl + ' has no '
+             + 'declared return value. Declare RTNTYPE with IMOQPROC');
+        return *off;
+      endif;
+    else;
+      if stub.setNo(i) < 1 or stub.setNo(i) > tgt.nDefs;
+        setErr(err : 'IMQ0014' : what + ': parameter '
+             + %char(stub.setNo(i)) + ' of ' + tgt.lbl + ' is not declared');
+        return *off;
+      endif;
+      if tgt.defs(stub.setNo(i)).passing = '*VALUE';
+        setErr(err : 'IMQ0014' : what + ': parameter '
+             + %char(stub.setNo(i)) + ' is passed by value and cannot be set');
+        return *off;
+      endif;
+    endif;
+    if stub.setFld(i) = '';
+      fd = tgt.defs(stub.setNo(i));
+    elseif not findField(tgt.obj : tgt.proc : stub.setNo(i)
+                         : stub.setFld(i) : fd : off : err);
+      setErr(err : 'IMQ0014' : what + ': ' + %trimr(err.text));
       return *off;
     endif;
-    if tgt.defs(stub.setNo(i)).passing = '*VALUE';
-      setErr(err : 'IMQ0014' : 'SETPARM entry ' + %char(i) + ': parameter '
-           + %char(stub.setNo(i)) + ' is passed by value and cannot be set');
-      return *off;
-    endif;
-    if not canEncode(tgt.defs(stub.setNo(i)) : stub.setVal(i) : m256);
-      setErr(err : 'IMQ0014' : 'SETPARM entry ' + %char(i) + ': ' + m256);
+    if not canEncode(fd : stub.setVal(i) : m256);
+      setErr(err : 'IMQ0014' : what + ': ' + m256);
       return *off;
     endif;
   endfor;
@@ -1313,7 +1725,9 @@ dcl-proc imoq_stubSave export;
     parmNo = stub.m(i).parmNo;
     mt = stub.m(i).matcher;
     v = stub.m(i).val;
-    exec sql insert into qtemp.imoq_sarg values(:id, :parmNo, :mt, :v);
+    fld = stub.m(i).field;
+    exec sql insert into qtemp.imoq_sarg
+      values(:id, :parmNo, :mt, :v, :fld);
   endfor;
   for i = 1 to stub.nRtn;
     seq = i;
@@ -1323,7 +1737,8 @@ dcl-proc imoq_stubSave export;
   for i = 1 to stub.nSet;
     parmNo = stub.setNo(i);
     v = stub.setVal(i);
-    exec sql insert into qtemp.imoq_sset values(:id, :parmNo, :v);
+    fld = stub.setFld(i);
+    exec sql insert into qtemp.imoq_sset values(:id, :parmNo, :v, :fld);
   endfor;
   return *on;
 end-proc;
@@ -1348,6 +1763,7 @@ dcl-proc imoq_stubLoad export;
   dcl-s parmNo int(5);
   dcl-s mt char(10);
   dcl-s v varchar(1024);
+  dcl-s fld varchar(40);
 
   clearErr(err);
   ensureTables();
@@ -1376,11 +1792,11 @@ dcl-proc imoq_stubLoad export;
   stub.thrDta = thrDta;
 
   exec sql declare cLdArg cursor for
-    select parmno, matcher, val from qtemp.imoq_sarg
+    select parmno, matcher, val, field from qtemp.imoq_sarg
      where stubid = :id order by parmno;
   exec sql open cLdArg;
   dow sqlcode = 0 and stub.nM < IMOQ_MAXP;
-    exec sql fetch next from cLdArg into :parmNo, :mt, :v;
+    exec sql fetch next from cLdArg into :parmNo, :mt, :v, :fld;
     if sqlcode <> 0;
       leave;
     endif;
@@ -1388,6 +1804,7 @@ dcl-proc imoq_stubLoad export;
     stub.m(stub.nM).parmNo = parmNo;
     stub.m(stub.nM).matcher = mt;
     stub.m(stub.nM).val = v;
+    stub.m(stub.nM).field = fld;
   enddo;
   exec sql close cLdArg;
 
@@ -1405,17 +1822,18 @@ dcl-proc imoq_stubLoad export;
   exec sql close cLdRtn;
 
   exec sql declare cLdSet cursor for
-    select parmno, val from qtemp.imoq_sset
+    select parmno, val, field from qtemp.imoq_sset
      where stubid = :id order by parmno;
   exec sql open cLdSet;
   dow sqlcode = 0 and stub.nSet < IMOQ_MAXP;
-    exec sql fetch next from cLdSet into :parmNo, :v;
+    exec sql fetch next from cLdSet into :parmNo, :v, :fld;
     if sqlcode <> 0;
       leave;
     endif;
     stub.nSet += 1;
     stub.setNo(stub.nSet) = parmNo;
     stub.setVal(stub.nSet) = v;
+    stub.setFld(stub.nSet) = fld;
   enddo;
   exec sql close cLdSet;
   return *on;
@@ -1510,7 +1928,7 @@ dcl-proc imoq_verifyCalls export;
 
   nIds = loadCallIds(obj : tgt.proc : ids);
   for i = 1 to nIds;
-    hit(i) = callMatches(ids(i) : m : nM : tgt.defs : tgt.nDefs);
+    hit(i) = callMatches(ids(i) : m : nM : tgt);
     if hit(i);
       count += 1;
     endif;
@@ -1611,6 +2029,7 @@ dcl-proc imoq_getArg export;
     procIn varchar(4096) const;
     callNo int(10) const;
     parmNo int(10) const;
+    field varchar(40) const;
     val varchar(1024);
     err likeds(imoq_err_t);
   end-pi;
@@ -1625,6 +2044,8 @@ dcl-proc imoq_getArg export;
   dcl-s offs int(10);
   dcl-s state char(1);
   dcl-s p5 int(5);
+  dcl-ds fd likeds(imoq_def_t);
+  dcl-s off int(10);
 
   val = '';
   if not objInfo(obj : objType : behavior : built : realLib);
@@ -1633,6 +2054,10 @@ dcl-proc imoq_getArg export;
   endif;
   if not resolveProc(obj : objType : procIn : proc : kind : declared
                      : err);
+    return *off;
+  endif;
+  if field <> ''
+     and not findField(obj : proc : parmNo : field : fd : off : err);
     return *off;
   endif;
 
@@ -1659,10 +2084,17 @@ dcl-proc imoq_getArg export;
     return *off;
   endif;
 
-  p5 = parmNo;
-  exec sql select state, val into :state, :val from qtemp.imoq_carg
-            where callid = :id and parmno = :p5;
-  if sqlcode <> 0 or state = 'N';
+  if field <> '';
+    loadCallField(id : parmNo : field : state : val);
+  else;
+    p5 = parmNo;
+    exec sql select state, val into :state, :val from qtemp.imoq_carg
+              where callid = :id and parmno = :p5 and field = '';
+    if sqlcode <> 0;
+      state = 'N';
+    endif;
+  endif;
+  if state = 'N';
     val = '*NOTPASSED';
   elseif state = 'O';
     val = '*OMIT';
@@ -1687,15 +2119,22 @@ dcl-proc imoq_cl_getArg export;
     procVary char(258);
     callNo int(10) const;
     parmNo int(5) const;
+    fieldIn char(40) const;
     rtn char(256);
     err likeds(imoq_err_t);
   end-pi;
   dcl-s v varchar(1024);
+  dcl-s field varchar(40);
+  dcl-s msg varchar(256);
   clearErr(err);
   ensureTables();
   rtn = ' ';
+  if not imoq_parseField(fieldIn : field : msg);
+    setErr(err : 'IMQ0014' : 'FIELD: ' + msg);
+    return;
+  endif;
   if imoq_getArg(obj : varyText(%addr(procVary) : 256) : callNo : parmNo
-            : v : err);
+            : field : v : err);
     rtn = v;
   endif;
 end-proc;
@@ -1964,6 +2403,23 @@ dcl-proc imoq_invoke export;
   dcl-s seq int(10);
   dcl-s m256 varchar(256);
   dcl-s args varchar(512);
+  // declared subfields (IMOQFIELD) and their values in this call
+  dcl-ds flds likeds(fields_t);
+  dcl-s nX int(10);
+  dcl-s xParm int(10) dim(MAXFVALS);
+  dcl-s xKey varchar(40) dim(MAXFVALS);
+  dcl-s xVal varchar(1024) dim(MAXFVALS);
+  dcl-s xF int(10) dim(MAXFVALS);
+  dcl-s j int(10);
+  dcl-s e int(10);
+  dcl-s nE int(10);
+  dcl-s size int(10);
+  dcl-s fld varchar(40);
+  dcl-ds fd likeds(imoq_def_t);
+  dcl-s off int(10);
+  dcl-s nRf int(10);
+  dcl-s rfFld varchar(40) dim(64);
+  dcl-s rfVal varchar(1024) dim(64);
 
   clear thr;
   monitor;
@@ -2002,6 +2458,34 @@ dcl-proc imoq_invoke export;
       endif;
     endfor;
 
+    // and every declared subfield (element) of the passed parameters
+    loadFields(obj : proc : flds);
+    for j = 1 to flds.n;
+      i = flds.parm(j);
+      if i < 1 or i > nPassed or i > nDefs or st(i) <> 'P';
+        iter;
+      endif;
+      size = imoq_byteSize(flds.def(j));
+      nE = flds.dim(j);
+      if nE = 0;
+        nE = 1;
+      endif;
+      for e = 1 to nE;
+        if nX >= MAXFVALS;
+          leave;
+        endif;
+        nX += 1;
+        xParm(nX) = i;
+        xF(nX) = j;
+        xKey(nX) = flds.name(j);
+        if flds.dim(j) > 0;
+          xKey(nX) += '(' + %char(e) + ')';
+        endif;
+        xVal(nX) = imoq_decode(ptrs(i) + flds.pos(j) - 1 + (e - 1) * size
+                               : flds.def(j));
+      endfor;
+    endfor;
+
     exec sql select coalesce(max(callid), 0) + 1 into :callId
                from qtemp.imoq_call;
     exec sql insert into qtemp.imoq_call
@@ -2011,7 +2495,14 @@ dcl-proc imoq_invoke export;
       state = st(i);
       v = vals(i);
       exec sql insert into qtemp.imoq_carg
-        values(:callId, :parmNo, :state, :v);
+        values(:callId, :parmNo, :state, :v, '');
+    endfor;
+    for i = 1 to nX;
+      parmNo = xParm(i);
+      v = xVal(i);
+      fld = xKey(i);
+      exec sql insert into qtemp.imoq_carg
+        values(:callId, :parmNo, 'P', :v, :fld);
     endfor;
 
     // newest matching stub with uses left wins
@@ -2035,7 +2526,8 @@ dcl-proc imoq_invoke export;
       if stubLeft(i) = 0;
         iter;
       endif;
-      if stubMatches(stubIds(i) : defs : nDefs : st : vals);
+      if stubMatches(stubIds(i) : defs : nDefs : st : vals
+                     : flds : nX : xParm : xKey : xVal : xF);
         chosen = i;
         leave;
       endif;
@@ -2076,19 +2568,27 @@ dcl-proc imoq_invoke export;
       return 1;
     endif;
 
-    // SETPARM
+    // SETPARM (fields of the return value wait until after RETURN)
     exec sql declare cSet cursor for
-      select parmno, val from qtemp.imoq_sset
+      select parmno, val, field from qtemp.imoq_sset
        where stubid = :sid order by parmno;
     exec sql open cSet;
     dow sqlcode = 0;
-      exec sql fetch next from cSet into :parmNo, :v;
+      exec sql fetch next from cSet into :parmNo, :v, :fld;
       if sqlcode <> 0;
         leave;
       endif;
-      if parmNo >= 1 and parmNo <= nDefs and parmNo <= nPassed;
-        if st(parmNo) = 'P';
+      if parmNo = 0;
+        if fld <> '' and nRf < %elem(rfFld);
+          nRf += 1;
+          rfFld(nRf) = fld;
+          rfVal(nRf) = v;
+        endif;
+      elseif parmNo <= nDefs and parmNo <= nPassed and st(parmNo) = 'P';
+        if fld = '';
           imoq_encode(ptrs(parmNo) : defs(parmNo) : v : m256);
+        elseif fieldAt(flds : parmNo : fld : fd : off);
+          imoq_encode(ptrs(parmNo) + off : fd : v : m256);
         endif;
       endif;
     enddo;
@@ -2105,6 +2605,19 @@ dcl-proc imoq_invoke export;
       if sqlcode = 0;
         imoq_encode(rtnPtr : rtnDef : v : m256);
       endif;
+    endif;
+
+    // Fields of a data structure return value. Without RETURN, the
+    // rest of the value starts out blank, with zero numbers.
+    if nRf > 0 and hasRtn and rtnPtr <> *null;
+      if rtnCnt = 0;
+        clearReturn(rtnPtr : rtnDef : flds);
+      endif;
+      for i = 1 to nRf;
+        if fieldAt(flds : 0 : rfFld(i) : fd : off);
+          imoq_encode(rtnPtr + off : fd : rfVal(i) : m256);
+        endif;
+      endfor;
     endif;
   on-error;
     return 0;
@@ -2135,34 +2648,195 @@ dcl-proc stubMatches;
     nDefs int(10) const;
     st char(1) dim(64) const;
     vals varchar(1024) dim(64) const;
+    flds likeds(fields_t) const;
+    nX int(10) const;
+    xParm int(10) dim(MAXFVALS) const;
+    xKey varchar(40) dim(MAXFVALS) const;
+    xVal varchar(1024) dim(MAXFVALS) const;
+    xF int(10) dim(MAXFVALS) const;
   end-pi;
   dcl-s parmNo int(5);
   dcl-s matcher char(10);
   dcl-s v varchar(1024);
+  dcl-s fld varchar(40);
   dcl-s ok ind inz(*on);
+  dcl-s k int(10);
+  dcl-s hit int(10);
   dcl-ds d likeds(imoq_def_t);
 
   exec sql declare cSarg cursor for
-    select parmno, matcher, val from qtemp.imoq_sarg
+    select parmno, matcher, val, field from qtemp.imoq_sarg
      where stubid = :stubId order by parmno;
   exec sql open cSarg;
   dow sqlcode = 0;
-    exec sql fetch next from cSarg into :parmNo, :matcher, :v;
+    exec sql fetch next from cSarg into :parmNo, :matcher, :v, :fld;
     if sqlcode <> 0;
       leave;
     endif;
     clear d;
     d.type = '*CHAR';
-    if parmNo <= nDefs;
-      d = defs(parmNo);
+    if fld <> '';
+      hit = 0;
+      for k = 1 to nX;
+        if xParm(k) = parmNo and xKey(k) = fld;
+          hit = k;
+          leave;
+        endif;
+      endfor;
+      if hit = 0;
+        ok = imoq_match(matcher : v : 'N' : '' : d);
+      else;
+        d = flds.def(xF(hit));
+        ok = imoq_match(matcher : v : 'P' : xVal(hit) : d);
+      endif;
+    else;
+      if parmNo <= nDefs;
+        d = defs(parmNo);
+      endif;
+      ok = imoq_match(matcher : v : st(parmNo) : vals(parmNo) : d);
     endif;
-    if not imoq_match(matcher : v : st(parmNo) : vals(parmNo) : d);
-      ok = *off;
+    if not ok;
       leave;
     endif;
   enddo;
   exec sql close cSarg;
   return ok;
+end-proc;
+
+// ------------------------------------------------------------------
+// Subfields of one procedure, for imoq_invoke
+// ------------------------------------------------------------------
+dcl-proc loadFields;
+  dcl-pi *n;
+    obj char(10) const;
+    proc varchar(4096) const;
+    flds likeds(fields_t);
+  end-pi;
+  dcl-s p5 int(5);
+  dcl-s nm varchar(30);
+  dcl-s pos int(10);
+  dcl-s type char(10);
+  dcl-s len int(10);
+  dcl-s dec int(10);
+  dcl-s dim int(10);
+
+  flds.n = 0;
+  exec sql declare cFld cursor for
+    select parmno, name, pos, type, len, dec, dim from qtemp.imoq_fld
+     where obj = :obj and proc = :proc order by parmno, seq;
+  exec sql open cFld;
+  dow sqlcode = 0 and flds.n < MAXFIELDS;
+    exec sql fetch next from cFld
+      into :p5, :nm, :pos, :type, :len, :dec, :dim;
+    if sqlcode <> 0;
+      leave;
+    endif;
+    flds.n += 1;
+    flds.parm(flds.n) = p5;
+    flds.name(flds.n) = nm;
+    flds.pos(flds.n) = pos;
+    flds.dim(flds.n) = dim;
+    clear flds.def(flds.n);
+    flds.def(flds.n).type = type;
+    flds.def(flds.n).len = len;
+    flds.def(flds.n).dec = dec;
+    flds.def(flds.n).passing = '*REF';
+  enddo;
+  exec sql close cFld;
+end-proc;
+
+// Layout and offset of NAME or NAME(i) in a loaded field list
+dcl-proc fieldAt;
+  dcl-pi *n ind;
+    flds likeds(fields_t) const;
+    parmNo int(10) const;
+    field varchar(40) const;
+    def likeds(imoq_def_t);
+    offset int(10);
+  end-pi;
+  dcl-s name varchar(30);
+  dcl-s idx int(10);
+  dcl-s j int(10);
+  splitField(field : name : idx);
+  if idx = 0;
+    idx = 1;
+  endif;
+  for j = 1 to flds.n;
+    if flds.parm(j) = parmNo and flds.name(j) = name;
+      if flds.dim(j) > 0 and idx > flds.dim(j);
+        return *off;
+      endif;
+      def = flds.def(j);
+      offset = flds.pos(j) - 1 + (idx - 1) * imoq_byteSize(def);
+      return *on;
+    endif;
+  endfor;
+  return *off;
+end-proc;
+
+// Blank a data structure return value, then zero its numeric and
+// date/time fields so the caller never sees decimal data errors
+dcl-proc clearReturn;
+  dcl-pi *n;
+    rtnPtr pointer value;
+    rtnDef likeds(imoq_def_t) const;
+    flds likeds(fields_t) const;
+  end-pi;
+  dcl-s q pointer;
+  dcl-s chunk char(32767) based(q);
+  dcl-s left int(10);
+  dcl-s n int(10);
+  dcl-s j int(10);
+  dcl-s e int(10);
+  dcl-s nE int(10);
+  dcl-s size int(10);
+  dcl-s zero varchar(32);
+  dcl-s m256 varchar(256);
+
+  q = rtnPtr;
+  left = imoq_byteSize(rtnDef);
+  dow left > 0;
+    n = left;
+    if n > %size(chunk);
+      n = %size(chunk);
+    endif;
+    %subst(chunk : 1 : n) = *blanks;
+    q += n;
+    left -= n;
+  enddo;
+
+  for j = 1 to flds.n;
+    if flds.parm(j) <> 0;
+      iter;
+    endif;
+    select;
+    when imoq_isNumeric(flds.def(j).type);
+      zero = '0';
+    when flds.def(j).type = '*DATE';
+      zero = '0001-01-01';
+    when flds.def(j).type = '*TIME';
+      zero = '00.00.00';
+    when flds.def(j).type = '*TIMESTAMP';
+      zero = '0001-01-01-00.00.00.000000';
+    when flds.def(j).type = '*IND';
+      zero = '0';
+    when flds.def(j).type = '*VARCHAR';
+      zero = '';
+    when flds.def(j).type = '*PTR';
+      zero = '*NULL';
+    other;
+      iter;
+    endsl;
+    size = imoq_byteSize(flds.def(j));
+    nE = flds.dim(j);
+    if nE = 0;
+      nE = 1;
+    endif;
+    for e = 1 to nE;
+      imoq_encode(rtnPtr + flds.pos(j) - 1 + (e - 1) * size
+                  : flds.def(j) : zero : m256);
+    endfor;
+  endfor;
 end-proc;
 
 // ==================================================================
@@ -2221,12 +2895,20 @@ dcl-proc imoq_arg export;
     proc varchar(4096) const;
     callNo int(10) const;
     parmNo int(10) const;
+    fieldIn varchar(40) const options(*nopass);
   end-pi;
   dcl-ds err likeds(imoq_err_t);
   dcl-s v varchar(1024);
+  dcl-s field varchar(40);
+  dcl-s msg varchar(256);
   clearErr(err);
   ensureTables();
-  if not imoq_getArg(obj : proc : callNo : parmNo : v : err);
+  if %parms() >= %parmnum(fieldIn);
+    if not imoq_parseField(fieldIn : field : msg);
+      return '*ERROR ' + msg;
+    endif;
+  endif;
+  if not imoq_getArg(obj : proc : callNo : parmNo : field : v : err);
     return '*ERROR ' + %trimr(err.text);
   endif;
   return v;
