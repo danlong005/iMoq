@@ -5,10 +5,6 @@ Work still to do on iMoq, from a review of its features and gaps
 
 ## Next up
 
-- [x] Add a LICENSE file. Without one, the public repository isn't open source
-      and nobody can legally reuse it.
-- [x] Add a "Limitations" section to the Programmer's Guide (section 11 of
-      [the guide](docs/PROGRAMMERS_GUIDE.md#11-limitations)).
 - [ ] Add examples for `LIB()`, `*VALUE` passing and the non-character types.
 - [ ] Support data structure subfields (see [Features](#features)).
 - [ ] Add in-order verification and unused-stub detection.
@@ -44,7 +40,6 @@ Work still to do on iMoq, from a review of its features and gaps
 
 ## Documentation
 
-- [x] Limitations section in the Programmer's Guide.
 - [ ] Example that creates mocks in another library with `LIB()`.
 - [ ] Example of a `*VALUE` parameter.
 - [ ] Example of `THROW(*MOCK …)`.
@@ -61,7 +56,6 @@ Work still to do on iMoq, from a review of its features and gaps
 
 ## Repository
 
-- [x] LICENSE file (MIT).
 - [ ] CHANGELOG, version tags and GitHub releases.
 - [ ] CI. A full build needs an IBM i, but a GitHub Action could check the docs
       and repository layout, or run the build on a self-hosted IBM i runner.
