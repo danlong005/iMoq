@@ -1,11 +1,13 @@
 # iMoq to-do list
 
 Work still to do on iMoq, from a review of its features and gaps
-(2026-09-22). Items are roughly in priority order within each section.
+(2026-09-22, updated 2026-09-24 after the RPG API). Items are roughly in
+priority order within each section.
 
 ## Next up
 
-- [ ] Add examples for `LIB()`, `*VALUE` passing and the non-character types.
+- [ ] Add examples for `LIB()`, `*VALUE` passing and the varchar, zoned,
+      float and pointer types.
 - [ ] Support data structure subfields (see [Features](#features)).
 - [ ] Add in-order verification and unused-stub detection.
 
@@ -40,10 +42,12 @@ Work still to do on iMoq, from a review of its features and gaps
 
 - [ ] Example that creates mocks in another library with `LIB()`.
 - [ ] Example of a `*VALUE` parameter.
-- [ ] Example of `THROW(*MOCK …)`.
+- [ ] Example of the command form `THROW(*MOCK …)`. The API form,
+      `imoq_throws(h : IMOQ_MOCK …)`, is in `EXAPI`.
 - [ ] Example of `IMOQRMV OBJ(name)` (removing a single mock).
-- [ ] Examples using varchar, date, timestamp, zoned, float and pointer
-      parameters. Today only the conversion unit tests (`IMOQENG_T`) use them.
+- [ ] Examples using varchar, zoned, float and pointer parameters. Today
+      only the conversion unit tests (`IMOQENG_T`) use them. (Dates, times,
+      timestamps and indicators are covered by `EXAPI`.)
 
 ## Testing
 
@@ -51,9 +55,13 @@ Work still to do on iMoq, from a review of its features and gaps
       mode, verification counts, reset scopes). `IMOQENG_T` covers only value
       conversion and matchers; the rest is tested only through the examples
       and the demo.
+- [ ] Test `IMOQRU_H`, the RPGUnit assertions. RPGUnit isn't installed on
+      pub400, so nothing has compiled or run it yet.
 
 ## Repository
 
 - [ ] CHANGELOG, version tags and GitHub releases.
 - [ ] CI. A full build needs an IBM i, but a GitHub Action could check the docs
       and repository layout, or run the build on a self-hosted IBM i runner.
+      `tools/pub400-build.sh` already does a full build and test run on
+      pub400 by hand.

@@ -115,12 +115,14 @@ physical file.
 | `QSRVSRC` | Binder source for `IMOQENG` |
 | `examples` | Example code ([documented here](docs/EXAMPLES.md)), in the same source-file folders (`QRPGLESRC`, `QCLLESRC`, `QSRVSRC`) |
 | `docs` | Programmer's Guide and Examples |
+| `tools` | `pub400-build.sh`: the maintainer's build-and-test run on pub400. It clears its build library first, so point `LIB` at scratch space only |
 
 The engine's unit tests, `IMOQTEST` and `IMOQENG_T` (with the `IMOQTST_H`
 harness), stay with the library code. The `examples` folder holds two kinds of
 example:
 - **Feature examples:** one feature each, as a test program `EX…_T` (RPG)
-  plus a small CL driver `EX…` that creates the mocks and runs it. `EXAMPLES`
+  plus a small CL driver `EX…` that creates the mocks and runs it. Most run
+  the commands through `imoq()`; `EXAPI` shows the whole RPG API. `EXAMPLES`
   runs them all.
 - **End-to-end demo:** code under test `DEMOCUT`, its dependencies `DEMODEP`
   and `DEMOSRV`, tests `DEMOCUT_T`, and driver `IMOQDEMO`.
