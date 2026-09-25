@@ -6,9 +6,9 @@
 #
 # 1. Copies the working tree (uncommitted changes included) to the
 #    IFS directory DIR on pub400.
-# 2. Empties library LIB (tools/pub400-remote.sh does 2-4 on pub400). LIB is scratch space shared with other
-#    projects, so it is cleared before every build: EVERYTHING IN IT
-#    IS DELETED. Journal receivers go first with *IGNINQMSG, so
+# 2. Empties library LIB (tools/pub400-remote.sh does 2-4 on
+#    pub400). LIB is scratch space, cleared before every build:
+#    EVERYTHING IN IT IS DELETED. Journal receivers go first with *IGNINQMSG, so
 #    "receiver never fully saved" (CPA7025) can't stop the job.
 # 3. Builds iMoq into LIB with BUILD '*YES'.
 # 4. Runs IMOQTEST, IMOQDEMO and EXAMPLES and prints their results.
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 USR=${USR:-LONGDM}
-LIB=${LIB:-LONGDM1}
+LIB=${LIB:-LONGDMB}
 DIR=${DIR:-/home/$USR/imoq}
 HOST=pub400.com
 PORT=2222
