@@ -30,6 +30,7 @@ For the concepts behind the examples, see the
 - Checking what happened
   - [EXVERIFY: check how often something was called](#exverify-check-how-often-something-was-called)
   - [EXNOMORE: make sure nothing else was called](#exnomore-make-sure-nothing-else-was-called)
+  - [EXUNUSED: find stubs that no call used](#exunused-find-stubs-that-no-call-used)
   - [EXCAPT: look at the arguments](#excapt-look-at-the-arguments)
   - [EXERRMSG: read a failed verification](#exerrmsg-read-a-failed-verification)
 - Test housekeeping
@@ -589,6 +590,41 @@ What to notice:
   still unverified.
 - **Limit it with `OBJ(name)`** to check just one mock.
 
+### EXUNUSED: find stubs that no call used
+
+Test program [`EXUNUSED_T`](../examples/QRPGLESRC/EXUNUSED_T.rpgle), driver [`EXUNUSED`](../examples/QCLLESRC/EXUNUSED.clle)
+
+```rpgle
+imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_PRICE) ARGS((1 *EQ A0001)) +
+      RETURN(''9.99'')');
+// A typo: the test calls with B0002, so this stub never answers
+imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_PRICE) ARGS((1 *EQ B002)) +
+      RETURN(''5.00'')');
+
+expect(getPrice('A0001') = 9.99 : 'the A0001 stub answered');
+expect(getPrice('B0002') = 0 : 'no stub matched B0002');
+
+expect(not imoq_ok('IMOQUNUSED') : 'the B002 stub is unused');
+```
+
+With the RPG API:
+
+```rpgle
+expect(not imoq_noUnusedStubs('EXPRICE')
+       : 'API: the B002 stub is unused');
+```
+
+What to notice:
+- **A wrong matcher doesn't fail on its own.** The call gets the default
+  answer of a `*LOOSE` mock, and the test may fail somewhere unrelated, or not
+  at all.
+- **`IMOQUNUSED` names the stub.** Escape message IMQ0203 lists each stub that
+  answered no call, with its number and matchers, such as
+  `stub 3 EXPRICE.EX_PRICE with (1 *EQ 'B002')`.
+- **One answered call is enough,** even for a stub with `TIMES(n)` or
+  `imoq_times`.
+- **Limit it with `OBJ(name)`** to check just one mock.
+
 ### EXCAPT: look at the arguments
 
 Test program [`EXCAPT_T`](../examples/QRPGLESRC/EXCAPT_T.rpgle), driver [`EXCAPT`](../examples/QCLLESRC/EXCAPT.clle)
@@ -732,7 +768,7 @@ jobs with the RPG API, one test procedure per topic:
 | `matchers` | All eleven matchers: `IMOQ_EQ`, `NE`, `LIKE`, `BLANK` on text; `GT`, `GE`, `LT`, `LE` on numbers (two on one parameter make a range); `ANY`, `OMIT`, `NOTPASSED` on an optional parameter |
 | `typedValues` | Times and timestamps in `imoq_with`, numbers and dates in `imoq_setParm`, timestamp and time return values |
 | `throwing` | `imoq_throws` with `IMOQ_MOCK` (IMQ0101) and with `CPF9898` from `QCPFMSG` |
-| `verifying` | `imoq_verify` with `imoq_calledOnce`, `imoq_calledTimes`, `imoq_calledAtLeast`, `imoq_calledAtMost`, `imoq_neverCalled`, `imoq_matchCount`, `imoq_noMoreCalls` with and without a mock name, and a failed check's message |
+| `verifying` | `imoq_verify` with `imoq_calledOnce`, `imoq_calledTimes`, `imoq_calledAtLeast`, `imoq_calledAtMost`, `imoq_neverCalled`, `imoq_matchCount`, `imoq_noMoreCalls` with and without a mock name, and a failed check's message. `imoq_noUnusedStubs` is in [EXUNUSED](#exunused-find-stubs-that-no-call-used) |
 | `capturing` | `imoq_arg`, `imoq_argNum`, `imoq_argDate`, `imoq_argTime`, `imoq_argTimestamp`, `imoq_argInd`, `imoq_argPassed` and `imoq_count` |
 | `resetting` | `imoq_reset()` and `imoq_reset(obj : IMOQ_CALLS / IMOQ_STUBS)`, and a removed stub's handle sending IMQ0300 |
 

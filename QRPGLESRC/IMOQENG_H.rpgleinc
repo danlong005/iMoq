@@ -204,6 +204,11 @@ dcl-pr imoq_cl_noMore extproc('IMOQ_CL_NOMORE');
   err likeds(imoq_err_t);
 end-pr;
 
+dcl-pr imoq_cl_unused extproc('IMOQ_CL_UNUSED');
+  obj char(10) const;
+  err likeds(imoq_err_t);
+end-pr;
+
 dcl-pr imoq_cl_reset extproc('IMOQ_CL_RESET');
   obj char(10) const;
   scope char(7) const;

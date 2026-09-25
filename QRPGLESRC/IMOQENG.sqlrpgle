@@ -2022,6 +2022,56 @@ dcl-proc imoq_cl_noMore export;
   endif;
 end-proc;
 
+// IMOQUNUSED --------------------------------------------------------
+// Fails with IMQ0203 while a stub (of obj) has answered no call
+dcl-proc imoq_cl_unused export;
+  dcl-pi *n;
+    obj char(10) const;
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-ds stub likeds(imoq_stub_t);
+  dcl-ds lerr likeds(imoq_err_t);
+  dcl-s id int(10);
+  dcl-s o char(10);
+  dcl-s proc varchar(4096);
+  dcl-s n int(10);
+  dcl-s txt varchar(2000);
+
+  clearErr(err);
+  ensureTables();
+  exec sql declare cUnused cursor for
+    select stubid, obj, proc from qtemp.imoq_stub
+     where used = 0 and (obj = :obj or :obj = '*ALL')
+     order by stubid;
+  exec sql open cUnused;
+  dow sqlcode = 0;
+    exec sql fetch next from cUnused into :id, :o, :proc;
+    if sqlcode <> 0;
+      leave;
+    endif;
+    n += 1;
+    if n <= 5;
+      txt += ' stub ' + %char(id) + ' ' + label(o : proc) + ' with ';
+      if imoq_stubLoad(id : stub : lerr);
+        txt += describeMatchers(stub.m : stub.nM);
+      endif;
+      txt += ';';
+    endif;
+  enddo;
+  exec sql close cUnused;
+
+  if n > 0;
+    txt = 'Unused stubs (' + %char(n) + '), no call matched:' + txt;
+    if n > 5;
+      txt += ' ...';
+    endif;
+    if %len(txt) > 512;
+      txt = %subst(txt : 1 : 509) + '...';
+    endif;
+    setErr(err : 'IMQ0203' : txt);
+  endif;
+end-proc;
+
 // IMOQGETARG --------------------------------------------------------
 dcl-proc imoq_getArg export;
   dcl-pi *n ind;

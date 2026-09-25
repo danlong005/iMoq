@@ -473,12 +473,14 @@ IMOQVERIFY OBJ(TAXSRV) PROC(CALCTAX) ARGS((2 *EQ PA)) TIMES(*EXACTLY 3)
 IMOQVERIFY OBJ(CUSTLKUP) ARGS((1 *LIKE 'C%')) TIMES(*ATLEAST 1)
 IMOQVERIFY OBJ(CUSTLKUP) TIMES(*ATMOST 2)
 IMOQNOMORE                    /* every recorded call has been verified */
+IMOQUNUSED                    /* every stub has answered a call        */
 ```
 
 | Command | What it does |
 |---|---|
 | `IMOQVERIFY` | Sends **IMQ0200** when the count of matching calls is wrong. On success, the matching calls are marked verified. |
 | `IMOQNOMORE` | Sends **IMQ0201** listing any call no successful `IMOQVERIFY` covered. Use it to catch surprise interactions. |
+| `IMOQUNUSED` | Sends **IMQ0203** listing any stub that answered no call, with its matchers. A stub with a wrong matcher doesn't fail on its own: the call just gets the default answer. `OBJ(name)` checks one mock. |
 | `IMOQGETARG` | Returns one captured argument to a CL variable (`*CHAR 256`). Use `CALL(*FIRST\|*LAST\|n)`, and `FIELD(name)` for a [subfield](#data-structures-and-arrays). |
 | `IMOQCOUNT` | Returns the number of matching calls to a CL variable (`*DEC 10 0`). |
 
@@ -554,6 +556,7 @@ Every call checks its piece against the declared layout and saves the stub again
 | `imoq_calledTimes(v : n)` · `imoq_calledAtLeast(v : n)` · `imoq_calledAtMost(v : n)` | `*on` if the count is right | `TIMES(*EXACTLY n)` · `*ATLEAST` · `*ATMOST` |
 | `imoq_matchCount(v)` | The number of matching calls. Unlike the checks, it doesn't mark them verified | `IMOQCOUNT` |
 | `imoq_noMoreCalls(obj)` | `*on` if every recorded call (to `obj`, or to any mock) was verified | `IMOQNOMORE` |
+| `imoq_noUnusedStubs(obj)` | `*on` if every stub (of `obj`, or of any mock) answered at least one call | `IMOQUNUSED` |
 | `imoq_reset(obj : scope)` | Forgets stubs and recorded calls. Both parameters are optional; scope is `IMOQ_ALL`, `IMOQ_CALLS` or `IMOQ_STUBS` | `IMOQRESET` |
 
 A successful check marks the calls it matched as verified, as `IMOQVERIFY` does. A verification handle stays usable until 16 newer `imoq_verify` calls have been made.
@@ -572,7 +575,7 @@ A successful check marks the calls it matched as verified, as `IMOQVERIFY` does.
 ### When something goes wrong
 
 - **Setup calls** (`imoq_when`, `imoq_with`, `imoq_returns`, `imoq_setParm`, `imoq_throws`, `imoq_times`, `imoq_verify`, `imoq_reset` and the typed `imoq_arg…` procedures) send escape message **IMQ0300** with the reason. RPGUnit reports the test as an error. That includes using a stub handle after `imoq_reset` removed the stub.
-- **Checks** (`imoq_called…`, `imoq_neverCalled`, `imoq_noMoreCalls`) return `*off`. `imoq_lastError()` explains why, so pass it to `assert`.
+- **Checks** (`imoq_called…`, `imoq_neverCalled`, `imoq_noMoreCalls`, `imoq_noUnusedStubs`) return `*off`. `imoq_lastError()` explains why, so pass it to `assert`.
 
 ### RPGUnit assertions
 
@@ -585,9 +588,10 @@ v = imoq_verify('TAXSRV' : 'CALCTAX');
 imoq_with(v : 2 : IMOQ_EQ : 'PA');
 imoq_assertCalledOnce(v);
 imoq_assertNoMoreCalls();
+imoq_assertNoUnusedStubs();
 ```
 
-It provides `imoq_assertCalledOnce`, `imoq_assertCalledTimes`, `imoq_assertCalledAtLeast`, `imoq_assertCalledAtMost`, `imoq_assertNeverCalled` and `imoq_assertNoMoreCalls`.
+It provides `imoq_assertCalledOnce`, `imoq_assertCalledTimes`, `imoq_assertCalledAtLeast`, `imoq_assertCalledAtMost`, `imoq_assertNeverCalled`, `imoq_assertNoMoreCalls` and `imoq_assertNoUnusedStubs`.
 
 ### Running commands directly
 
@@ -668,6 +672,7 @@ The [EXLIB example](EXAMPLES.md#exlib-create-a-mock-in-another-library) shows al
 | IMQ0101 | Sent by `THROW(*MOCK …)` |
 | IMQ0200 / IMQ0201 | Verification failed / unverified interactions |
 | IMQ0202 | `IMOQGETARG`: no call with that number |
+| IMQ0203 | `IMOQUNUSED`: a stub answered no call |
 | IMQ0300 | A command run through `imoq()`, or an RPG API setup call, failed; the text explains why |
 
 ### Looking inside
@@ -740,6 +745,7 @@ The mock is identified by `OBJ(name)`. Service program mocks also take `PROC(exp
 | `IMOQWHEN` | `OBJ` · `PROC(*PGM\|name)` · `ARGS((n matcher value [field]) …)` · `RETURN(v …)` · `SETPARM((n value [field]) …)` · `THROW(msgid msgf lib data)` · `TIMES(*ALWAYS\|n)` | `when().thenReturn()/thenThrow()` / `Setup().Returns()/Callback()/Throws()` |
 | `IMOQVERIFY` | `OBJ` · `PROC` · `ARGS` · `TIMES(*ONCE\|*NEVER\|*EXACTLY n\|*ATLEAST n\|*ATMOST n)` | `verify(m, times(n))` / `Verify(Times)` |
 | `IMOQNOMORE` | `OBJ(*ALL\|name)` | `verifyNoMoreInteractions()` / `VerifyNoOtherCalls()` |
+| `IMOQUNUSED` | `OBJ(*ALL\|name)` | strict stubs (`UnnecessaryStubbingException`) / `VerifyAll()` |
 | `IMOQGETARG` | `OBJ` · `PARM(n)` · `RTNVAL(&char256)` · `PROC` · `CALL(*LAST\|*FIRST\|n)` · `FIELD(name)` · CL programs only | `ArgumentCaptor` |
 | `IMOQCOUNT` | `OBJ` · `RTNVAL(&dec10)` · `PROC` · `ARGS` · CL programs only | – |
 | `IMOQRESET` | `OBJ(*ALL\|name)` · `SCOPE(*ALL\|*CALLS\|*STUBS)` | `reset()` / `clearInvocations()` |
@@ -754,6 +760,7 @@ From RPG, the same stubbing and verification is available as the [RPG API](#8-wr
 | `v = imoq_verify(obj : proc)` · `imoq_with` · `imoq_calledOnce` / `imoq_calledTimes` / `imoq_calledAtLeast` / `imoq_calledAtMost` / `imoq_neverCalled` | `IMOQVERIFY` |
 | `imoq_matchCount(v)` · `imoq_count(obj : proc)` | `IMOQCOUNT` |
 | `imoq_noMoreCalls(obj)` | `IMOQNOMORE` |
+| `imoq_noUnusedStubs(obj)` | `IMOQUNUSED` |
 | `imoq_arg` · `imoq_argNum` / `Date` / `Time` / `Timestamp` / `Ind` · `imoq_argPassed` | `IMOQGETARG` |
 | `imoq_reset(obj : scope)` | `IMOQRESET` |
 

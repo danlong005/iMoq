@@ -1,0 +1,41 @@
+/* ---------------------------------------------------------------- */
+/* IMQUNUC - iMoq command processing program for IMOQUNUSED         */
+/* ---------------------------------------------------------------- */
+             PGM        PARM(&OBJ)
+             DCL        VAR(&OBJ) TYPE(*CHAR) LEN(10)
+             DCL        VAR(&ERR) TYPE(*CHAR) LEN(529)
+             DCL        VAR(&ERRID) TYPE(*CHAR) LEN(7) STG(*DEFINED) +
+                          DEFVAR(&ERR 1)
+             DCL        VAR(&ERRLIB) TYPE(*CHAR) LEN(10) STG(*DEFINED) +
+                          DEFVAR(&ERR 8)
+             DCL        VAR(&ERRTXT) TYPE(*CHAR) LEN(512) STG(*DEFINED) +
+                          DEFVAR(&ERR 18)
+             DCL        VAR(&MSG) TYPE(*CHAR) LEN(512)
+             DCL        VAR(&CLMSGID) TYPE(*CHAR) LEN(7)
+
+             MONMSG     MSGID(CPF0000 MCH0000) +
+                          EXEC(GOTO CMDLBL(FAIL))
+
+             CALLPRC    PRC('IMOQ_CL_UNUSED') PARM((&OBJ) (&ERR))
+             IF         COND(&ERRID *NE ' ') THEN(GOTO CMDLBL(MOCKERR))
+             RETURN
+
+/* ---- error exits ------------------------------------------------ */
+ MOCKERR:    SNDPGMMSG  MSGID(&ERRID) MSGF(&ERRLIB/IMOQMSGF) +
+                          MSGDTA(&ERRTXT) MSGTYPE(*ESCAPE)
+             MONMSG     MSGID(CPF0000)
+             RETURN
+
+ CLERR:      CALLPRC    PRC('IMOQ_CL_FAIL') PARM((&CLMSGID) (&MSG) (&ERR))
+             MONMSG     MSGID(CPF0000 MCH0000)
+             SNDPGMMSG  MSGID(&CLMSGID) MSGF(&ERRLIB/IMOQMSGF) MSGDTA(&MSG) +
+                          MSGTYPE(*ESCAPE)
+             MONMSG     MSGID(CPF0000) EXEC(SNDPGMMSG MSGID(CPF9898) +
+                          MSGF(QCPFMSG) MSGDTA(&MSG) MSGTYPE(*ESCAPE))
+             RETURN
+
+ FAIL:       RCVMSG     MSGTYPE(*EXCP) RMV(*YES) MSG(&MSG)
+             MONMSG     MSGID(CPF0000)
+             CHGVAR     VAR(&CLMSGID) VALUE('IMQ0015')
+             GOTO       CMDLBL(CLERR)
+             ENDPGM

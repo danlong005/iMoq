@@ -1,12 +1,12 @@
 # iMoq to-do list
 
 Work still to do on iMoq, from a review of its features and gaps
-(2026-09-22, updated 2026-09-24 after the RPG API). Items are roughly in
-priority order within each section.
+(2026-09-22, updated 2026-09-24 after unused-stub detection). Items are
+roughly in priority order within each section.
 
 ## Next up
 
-- [ ] Add in-order verification and unused-stub detection.
+- [ ] Add in-order verification.
 
 ## Features
 
@@ -15,8 +15,6 @@ priority order within each section.
       answer is a fixed value.
 - [ ] **In-order verification.** Check that one call happened before another,
       across mocks. Recorded calls already have a global `CALLID` to order by.
-- [ ] **Unused-stub detection.** Report stubs that no call used, like
-      Mockito's strict stubs. Today a stub with a wrong matcher fails silently.
 - [ ] **More flexible matchers.** OR between matchers (all `ARGS` must match
       today), a value-list matcher, and a between matcher.
 - [ ] **More parameter types.** `*VARCHAR` passed `*VALUE`, captured

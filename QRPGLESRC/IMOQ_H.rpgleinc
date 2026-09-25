@@ -274,6 +274,12 @@ dcl-pr imoq_noMoreCalls ind extproc('IMOQ_NOMORECALLS');
   obj char(10) const options(*nopass);
 end-pr;
 
+// *on if every stub (of obj, or of any mock) answered at least one
+// call. A stub no call used usually has a wrong matcher.
+dcl-pr imoq_noUnusedStubs ind extproc('IMOQ_NOUNUSEDSTUBS');
+  obj char(10) const options(*nopass);
+end-pr;
+
 // Forget stubs and/or recorded calls (default: everything)
 dcl-pr imoq_reset extproc('IMOQ_RESET');
   obj char(10) const options(*nopass);

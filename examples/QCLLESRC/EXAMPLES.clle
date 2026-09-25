@@ -36,6 +36,8 @@
              CALLSUBR   SUBR(RUN)
              CHGVAR     VAR(&EX) VALUE('EXNOMORE')
              CALLSUBR   SUBR(RUN)
+             CHGVAR     VAR(&EX) VALUE('EXUNUSED')
+             CALLSUBR   SUBR(RUN)
              CHGVAR     VAR(&EX) VALUE('EXCAPT')
              CALLSUBR   SUBR(RUN)
              CHGVAR     VAR(&EX) VALUE('EXOMIT')

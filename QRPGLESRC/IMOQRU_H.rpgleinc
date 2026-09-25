@@ -66,3 +66,15 @@ dcl-proc imoq_assertNoMoreCalls;
     assert(imoq_noMoreCalls() : imoq_lastError());
   endif;
 end-proc;
+
+// Every stub (of obj, or of any mock) answered at least one call
+dcl-proc imoq_assertNoUnusedStubs;
+  dcl-pi *n;
+    obj char(10) const options(*nopass);
+  end-pi;
+  if %parms() >= %parmnum(obj);
+    assert(imoq_noUnusedStubs(obj) : imoq_lastError());
+  else;
+    assert(imoq_noUnusedStubs() : imoq_lastError());
+  endif;
+end-proc;

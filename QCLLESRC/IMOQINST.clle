@@ -93,6 +93,9 @@
              CHGVAR     VAR(&CPP) VALUE('IMQNMRC')
              CHGVAR     VAR(&CMD) VALUE('IMOQNOMORE')
              CALLSUBR   SUBR(BUILD)
+             CHGVAR     VAR(&CPP) VALUE('IMQUNUC')
+             CHGVAR     VAR(&CMD) VALUE('IMOQUNUSED')
+             CALLSUBR   SUBR(BUILD)
              CHGVAR     VAR(&CPP) VALUE('IMQARGC')
              CHGVAR     VAR(&CMD) VALUE('IMOQGETARG')
              CALLSUBR   SUBR(BUILD)
@@ -201,6 +204,12 @@
                           SECLVL('&1') SEV(40) FMT((*CHAR 512))
              ADDMSGD    MSGID(IMQ0202) MSGF(&LIB/IMOQMSGF) MSG('&1') +
                           SECLVL('&1') SEV(40) FMT((*CHAR 512))
+             ADDMSGD    MSGID(IMQ0203) MSGF(&LIB/IMOQMSGF) MSG('&1') +
+                          SECLVL('A stub was set up with IMOQWHEN but +
+                          answered no call. Its argument matchers +
+                          may be wrong, or the code under test no +
+                          longer makes the call.') SEV(40) +
+                          FMT((*CHAR 512))
              ADDMSGD    MSGID(IMQ0300) MSGF(&LIB/IMOQMSGF) MSG('&1') +
                           SECLVL('A command run with imoq(), or a call +
                           to the iMoq RPG API, failed.') +

@@ -11,8 +11,8 @@
 //   this module; a slot is reused by the VSLOTS-th newer imoq_verify.
 //
 //   Setup calls send escape IMQ0300 to the test when they fail.
-//   Checks (imoq_called..., imoq_noMoreCalls) return *off and leave
-//   the reason in imoq_lastError().
+//   Checks (imoq_called..., imoq_noMoreCalls, imoq_noUnusedStubs)
+//   return *off and leave the reason in imoq_lastError().
 // ------------------------------------------------------------------
 ctl-opt nomain option(*srcstmt:*nodebugio);
 
@@ -757,6 +757,21 @@ dcl-proc imoq_noMoreCalls export;
     o = upperName(obj);
   endif;
   imoq_cl_noMore(o : err);
+  return err.msgId = ' ';
+end-proc;
+
+// imoq_noUnusedStubs(obj) - *on if every stub (of obj) answered a call
+dcl-proc imoq_noUnusedStubs export;
+  dcl-pi *n ind;
+    obj char(10) const options(*nopass);
+  end-pi;
+  dcl-ds err likeds(imoq_err_t);
+  dcl-s o char(10);
+  o = '*ALL';
+  if %parms() >= %parmnum(obj);
+    o = upperName(obj);
+  endif;
+  imoq_cl_unused(o : err);
   return err.msgId = ' ';
 end-proc;
 
