@@ -143,7 +143,10 @@
              CALL       PGM(&LIB/IMOQINST) PARM(&LIB &LIB)
 
 /* ---- optional self-tests --------------------------------------- */
+/* Compiling the tests needs the iMoq commands in the library list   */
              IF         COND(&RUNTESTS *EQ '*YES') THEN(DO)
+             ADDLIBLE   LIB(&LIB) POSITION(*LAST)
+             MONMSG     MSGID(CPF2103)
              CHGVAR     VAR(&PGM) VALUE('IMOQTEST')
              CALLSUBR   SUBR(RUNTEST)
              CHGVAR     VAR(&PGM) VALUE('IMOQDEMO')

@@ -58,8 +58,10 @@
                           EXPORT(*SRCFILE) SRCFILE(&SRCLIB/QSRVSRC) +
                           SRCMBR(DEMOSRV)
 
-/* 2. Negative check: the library is still *CURLIB, which is        */
-/*    searched before QTEMP, so IMOQPGM must refuse (IMQ0010)       */
+/* 2. Negative check: with the library as *CURLIB, as many job     */
+/*    descriptions set it, it is searched before QTEMP, so IMOQPGM  */
+/*    must refuse (IMQ0010)                                         */
+             CHGCURLIB  CURLIB(&LIB)
              CHGVAR     VAR(&OK) VALUE('0')
              IMOQPGM    OBJ(DEMODEP)
              MONMSG     MSGID(IMQ0010) EXEC(CHGVAR VAR(&OK) VALUE('1'))

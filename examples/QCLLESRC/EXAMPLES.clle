@@ -15,6 +15,9 @@
              DCL        VAR(&NBR) TYPE(*CHAR) LEN(12)
 
              CHGJOB     INQMSGRPY(*DFT)
+/* Compiling the drivers needs the iMoq commands in the library list */
+             ADDLIBLE   LIB(&LIB) POSITION(*LAST)
+             MONMSG     MSGID(CPF2103)
 
              CHGVAR     VAR(&EX) VALUE('EXPGM')
              CALLSUBR   SUBR(RUN)
