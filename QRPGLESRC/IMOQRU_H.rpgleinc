@@ -55,6 +55,14 @@ dcl-proc imoq_assertNeverCalled;
   assert(imoq_neverCalled(h) : imoq_lastError());
 end-proc;
 
+// A matching call came after the previous order check's call
+dcl-proc imoq_assertCalledInOrder;
+  dcl-pi *n;
+    h int(10) const;
+  end-pi;
+  assert(imoq_calledInOrder(h) : imoq_lastError());
+end-proc;
+
 // Every recorded call (to obj, or to any mock) was verified
 dcl-proc imoq_assertNoMoreCalls;
   dcl-pi *n;

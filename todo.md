@@ -1,20 +1,14 @@
 # iMoq to-do list
 
 Work still to do on iMoq, from a review of its features and gaps
-(2026-09-22, updated 2026-09-24 after unused-stub detection). Items are
+(2026-09-22, updated 2026-09-25 after in-order verification). Items are
 roughly in priority order within each section.
-
-## Next up
-
-- [ ] Add in-order verification.
 
 ## Features
 
 - [ ] **Answers built from the arguments.** For example, set parameter 2 from
       parameter 1, or call a user procedure like Moq's `Callback`. Today every
       answer is a fixed value.
-- [ ] **In-order verification.** Check that one call happened before another,
-      across mocks. Recorded calls already have a global `CALLID` to order by.
 - [ ] **More flexible matchers.** OR between matchers (all `ARGS` must match
       today), a value-list matcher, and a between matcher.
 - [ ] **More parameter types.** `*VARCHAR` passed `*VALUE`, captured

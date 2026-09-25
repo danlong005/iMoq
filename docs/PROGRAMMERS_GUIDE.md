@@ -480,9 +480,27 @@ IMOQUNUSED                    /* every stub has answered a call        */
 |---|---|
 | `IMOQVERIFY` | Sends **IMQ0200** when the count of matching calls is wrong. On success, the matching calls are marked verified. |
 | `IMOQNOMORE` | Sends **IMQ0201** listing any call no successful `IMOQVERIFY` covered. Use it to catch surprise interactions. |
+| `IMOQORDER` | Sends **IMQ0200** unless a matching call came after the call the previous `IMOQORDER` matched. See [Checking the order of calls](#checking-the-order-of-calls). |
 | `IMOQUNUSED` | Sends **IMQ0203** listing any stub that answered no call, with its matchers. A stub with a wrong matcher doesn't fail on its own: the call just gets the default answer. `OBJ(name)` checks one mock. |
 | `IMOQGETARG` | Returns one captured argument to a CL variable (`*CHAR 256`). Use `CALL(*FIRST\|*LAST\|n)`, and `FIELD(name)` for a [subfield](#data-structures-and-arrays). |
 | `IMOQCOUNT` | Returns the number of matching calls to a CL variable (`*DEC 10 0`). |
+
+### Checking the order of calls
+
+The other checks count calls in any order. Where the order matters, such as locking a record before updating it, list the calls in the order they should have happened:
+
+```
+IMOQORDER  OBJ(LOCKSVC) PROC(LOCK) ARGS((1 *EQ C0042))
+IMOQORDER  OBJ(CUSTUPD) ARGS((1 *EQ C0042))
+IMOQORDER  OBJ(LOCKSVC) PROC(UNLOCK) ARGS((1 *EQ C0042))
+```
+
+- Each `IMOQORDER` passes if a matching call came **after** the call the previous `IMOQORDER` matched. It matches the earliest such call, which becomes the position for the next step.
+- **Other calls may come in between.** The steps above pass if the code also logged something between the lock and the update.
+- A sequence works across mocks. `AFTER(*START)` begins a new sequence, as does `IMOQRESET` of recorded calls.
+- A failure sends **IMQ0200**, like `IMOQVERIFY`, naming the call where the sequence stood and listing when the matching calls did happen. The matched call is marked verified, as `IMOQVERIFY` does.
+
+Order is only checked where you ask for it. Tests that don't use `IMOQORDER` work as before.
 
 ### Capturing arguments
 
@@ -554,6 +572,8 @@ Every call checks its piece against the declared layout and saves the stub again
 | `v = imoq_verify(obj : proc)` | A verification handle. Add matchers with `imoq_with(v : …)` | – |
 | `imoq_calledOnce(v)` / `imoq_neverCalled(v)` | `*on` if the count is right | `IMOQVERIFY TIMES(*ONCE)` / `TIMES(*NEVER)` |
 | `imoq_calledTimes(v : n)` · `imoq_calledAtLeast(v : n)` · `imoq_calledAtMost(v : n)` | `*on` if the count is right | `TIMES(*EXACTLY n)` · `*ATLEAST` · `*ATMOST` |
+| `imoq_calledInOrder(v)` | `*on` if a matching call came after the call the previous order check matched | `IMOQORDER` |
+| `imoq_startOrder()` | Begins a new order sequence | `IMOQORDER AFTER(*START)` |
 | `imoq_matchCount(v)` | The number of matching calls. Unlike the checks, it doesn't mark them verified | `IMOQCOUNT` |
 | `imoq_noMoreCalls(obj)` | `*on` if every recorded call (to `obj`, or to any mock) was verified | `IMOQNOMORE` |
 | `imoq_noUnusedStubs(obj)` | `*on` if every stub (of `obj`, or of any mock) answered at least one call | `IMOQUNUSED` |
@@ -575,7 +595,7 @@ A successful check marks the calls it matched as verified, as `IMOQVERIFY` does.
 ### When something goes wrong
 
 - **Setup calls** (`imoq_when`, `imoq_with`, `imoq_returns`, `imoq_setParm`, `imoq_throws`, `imoq_times`, `imoq_verify`, `imoq_reset` and the typed `imoq_arg…` procedures) send escape message **IMQ0300** with the reason. RPGUnit reports the test as an error. That includes using a stub handle after `imoq_reset` removed the stub.
-- **Checks** (`imoq_called…`, `imoq_neverCalled`, `imoq_noMoreCalls`, `imoq_noUnusedStubs`) return `*off`. `imoq_lastError()` explains why, so pass it to `assert`.
+- **Checks** (`imoq_called…` including `imoq_calledInOrder`, `imoq_neverCalled`, `imoq_noMoreCalls`, `imoq_noUnusedStubs`) return `*off`. `imoq_lastError()` explains why, so pass it to `assert`.
 
 ### RPGUnit assertions
 
@@ -591,7 +611,7 @@ imoq_assertNoMoreCalls();
 imoq_assertNoUnusedStubs();
 ```
 
-It provides `imoq_assertCalledOnce`, `imoq_assertCalledTimes`, `imoq_assertCalledAtLeast`, `imoq_assertCalledAtMost`, `imoq_assertNeverCalled`, `imoq_assertNoMoreCalls` and `imoq_assertNoUnusedStubs`.
+It provides `imoq_assertCalledOnce`, `imoq_assertCalledTimes`, `imoq_assertCalledAtLeast`, `imoq_assertCalledAtMost`, `imoq_assertCalledInOrder`, `imoq_assertNeverCalled`, `imoq_assertNoMoreCalls` and `imoq_assertNoUnusedStubs`.
 
 ### Running commands directly
 
@@ -670,7 +690,7 @@ The [EXLIB example](EXAMPLES.md#exlib-create-a-mock-in-another-library) shows al
 | IMQ0020 / IMQ0021 | `IMOQCHK` finding / summary |
 | IMQ0100 | A strict mock received a call no stub matched |
 | IMQ0101 | Sent by `THROW(*MOCK …)` |
-| IMQ0200 / IMQ0201 | Verification failed / unverified interactions |
+| IMQ0200 / IMQ0201 | Verification (`IMOQVERIFY`, `IMOQORDER`) failed / unverified interactions |
 | IMQ0202 | `IMOQGETARG`: no call with that number |
 | IMQ0203 | `IMOQUNUSED`: a stub answered no call |
 | IMQ0300 | A command run through `imoq()`, or an RPG API setup call, failed; the text explains why |
@@ -744,6 +764,7 @@ The mock is identified by `OBJ(name)`. Service program mocks also take `PROC(exp
 | `IMOQBUILD` | `OBJ` | – |
 | `IMOQWHEN` | `OBJ` · `PROC(*PGM\|name)` · `ARGS((n matcher value [field]) …)` · `RETURN(v …)` · `SETPARM((n value [field]) …)` · `THROW(msgid msgf lib data)` · `TIMES(*ALWAYS\|n)` | `when().thenReturn()/thenThrow()` / `Setup().Returns()/Callback()/Throws()` |
 | `IMOQVERIFY` | `OBJ` · `PROC` · `ARGS` · `TIMES(*ONCE\|*NEVER\|*EXACTLY n\|*ATLEAST n\|*ATMOST n)` | `verify(m, times(n))` / `Verify(Times)` |
+| `IMOQORDER` | `OBJ` · `PROC` · `ARGS` · `AFTER(*PREV\|*START)` | `inOrder(…).verify(m)` / `MockSequence` |
 | `IMOQNOMORE` | `OBJ(*ALL\|name)` | `verifyNoMoreInteractions()` / `VerifyNoOtherCalls()` |
 | `IMOQUNUSED` | `OBJ(*ALL\|name)` | strict stubs (`UnnecessaryStubbingException`) / `VerifyAll()` |
 | `IMOQGETARG` | `OBJ` · `PARM(n)` · `RTNVAL(&char256)` · `PROC` · `CALL(*LAST\|*FIRST\|n)` · `FIELD(name)` · CL programs only | `ArgumentCaptor` |
@@ -758,6 +779,7 @@ From RPG, the same stubbing and verification is available as the [RPG API](#8-wr
 |---|---|
 | `h = imoq_when(obj : proc)` · `imoq_with` · `imoq_returns` · `imoq_setParm` · `imoq_throws` · `imoq_times` | `IMOQWHEN` |
 | `v = imoq_verify(obj : proc)` · `imoq_with` · `imoq_calledOnce` / `imoq_calledTimes` / `imoq_calledAtLeast` / `imoq_calledAtMost` / `imoq_neverCalled` | `IMOQVERIFY` |
+| `imoq_calledInOrder(v)` · `imoq_startOrder()` | `IMOQORDER` |
 | `imoq_matchCount(v)` · `imoq_count(obj : proc)` | `IMOQCOUNT` |
 | `imoq_noMoreCalls(obj)` | `IMOQNOMORE` |
 | `imoq_noUnusedStubs(obj)` | `IMOQUNUSED` |

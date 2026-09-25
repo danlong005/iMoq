@@ -180,6 +180,17 @@ dcl-pr imoq_verifyCalls ind extproc('IMOQ_VERIFYCALLS');
   err likeds(imoq_err_t);
 end-pr;
 
+// A matching call came after the one the previous order check
+// matched (IMQ0200 on failure); fromStart searches all calls
+dcl-pr imoq_verifyOrder ind extproc('IMOQ_VERIFYORDER');
+  obj char(10) const;
+  procIn varchar(4096) const;
+  m likeds(imoq_matcher_t) dim(64) const;
+  nM int(10) const;
+  fromStart ind const;
+  err likeds(imoq_err_t);
+end-pr;
+
 dcl-pr imoq_getArg ind extproc('IMOQ_GETARG');
   obj char(10) const;
   procIn varchar(4096) const;
@@ -247,3 +258,5 @@ dcl-pr imoq_count int(10) extproc('IMOQ_COUNT');
   obj char(10) const;
   proc varchar(4096) const;
 end-pr;
+
+dcl-pr imoq_startOrder extproc('IMOQ_STARTORDER') end-pr;

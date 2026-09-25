@@ -265,6 +265,15 @@ dcl-pr imoq_neverCalled ind extproc('IMOQ_NEVERCALLED');
   h int(10) const;
 end-pr;
 
+// Order: *on if a matching call came after the call the previous
+// imoq_calledInOrder matched (other calls may come in between).
+// imoq_startOrder() begins a new sequence, as does imoq_reset.
+dcl-pr imoq_calledInOrder ind extproc('IMOQ_CALLEDINORDER');
+  h int(10) const;
+end-pr;
+
+dcl-pr imoq_startOrder extproc('IMOQ_STARTORDER') end-pr;
+
 dcl-pr imoq_matchCount int(10) extproc('IMOQ_MATCHCOUNT');
   h int(10) const;
 end-pr;

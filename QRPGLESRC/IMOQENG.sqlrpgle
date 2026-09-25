@@ -54,6 +54,8 @@ end-ds;
 dcl-s gTablesOk ind;
 dcl-s gLastErr varchar(512);
 dcl-s gLastStub int(10);
+// Call the last successful order check matched (IMOQORDER); 0 = none
+dcl-s gOrderPos int(10);
 
 dcl-ds apiErr_t qualified template;
   bytesProv int(10);
@@ -198,6 +200,7 @@ dcl-proc dropTables;
   runDdl('DROP ALIAS QTEMP.IMOQ_SRCW');
   runDdl('DROP ALIAS QTEMP.IMOQ_BNDR');
   gTablesOk = *off;
+  gOrderPos = 0;
 end-proc;
 
 // ------------------------------------------------------------------
@@ -223,6 +226,8 @@ dcl-proc deleteCalls;
   exec sql delete from qtemp.imoq_carg where callid in
     (select callid from qtemp.imoq_call where obj = :obj or :obj = '*ALL');
   exec sql delete from qtemp.imoq_call where obj = :obj or :obj = '*ALL';
+  // call numbers can be handed out again, so start any order over
+  gOrderPos = 0;
 end-proc;
 
 dcl-proc forgetObj;
@@ -1980,6 +1985,115 @@ dcl-proc imoq_verifyCalls export;
   endif;
   setErr(err : 'IMQ0200' : txt);
   return *off;
+end-proc;
+
+// IMOQORDER ---------------------------------------------------------
+dcl-proc imoq_cl_order export;
+  dcl-pi *n;
+    obj char(10) const;
+    procVary char(258);
+    args char(1) options(*varsize);
+    after char(6) const;
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-ds m likeds(imoq_matcher_t) dim(64);
+  dcl-s nM int(10);
+
+  clearErr(err);
+  if not unpackMatchers(%addr(args) : m : nM : err);
+    return;
+  endif;
+  imoq_verifyOrder(obj : varyText(%addr(procVary) : 256) : m : nM
+                   : after = '*START' : err);
+end-proc;
+
+// ------------------------------------------------------------------
+// imoq_verifyOrder - a matching call came after the call the previous
+// order check matched (or anywhere, with fromStart). The earliest such
+// call becomes the new position and is marked verified. Used by
+// IMOQORDER and imoq_calledInOrder. IMQ0200 on failure.
+// ------------------------------------------------------------------
+dcl-proc imoq_verifyOrder export;
+  dcl-pi *n ind;
+    obj char(10) const;
+    procIn varchar(4096) const;
+    mIn likeds(imoq_matcher_t) dim(64) const;
+    nM int(10) const;
+    fromStart ind const;
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-ds tgt likeds(target_t);
+  dcl-ds m likeds(imoq_matcher_t) dim(64);
+  dcl-s ids int(10) dim(5000);
+  dcl-s nIds int(10);
+  dcl-s i int(10);
+  dcl-s n int(10);
+  dcl-s id int(10);
+  dcl-s o char(10);
+  dcl-s proc varchar(4096);
+  dcl-s txt varchar(2000);
+
+  clearErr(err);
+  ensureTables();
+  if not openTarget(obj : procIn : tgt : err);
+    return *off;
+  endif;
+  for i = 1 to nM;
+    m(i) = mIn(i);
+  endfor;
+  if not checkMatchers(m : nM : tgt : err);
+    return *off;
+  endif;
+  if fromStart;
+    gOrderPos = 0;
+  endif;
+
+  nIds = loadCallIds(obj : tgt.proc : ids);
+  for i = 1 to nIds;
+    if ids(i) > gOrderPos and callMatches(ids(i) : m : nM : tgt);
+      id = ids(i);
+      exec sql update qtemp.imoq_call set verified = 'Y'
+                where callid = :id;
+      gOrderPos = id;
+      return *on;
+    endif;
+  endfor;
+
+  // Say where the sequence stood and when the matching calls happened
+  txt = 'Order verification failed: expected ' + tgt.lbl
+      + ' to be called with ' + describeMatchers(m : nM);
+  if gOrderPos > 0;
+    id = gOrderPos;
+    exec sql select obj, proc into :o, :proc from qtemp.imoq_call
+              where callid = :id;
+    txt += ' after ' + label(o : proc) + describeCall(id)
+         + ', but no matching call came after it. Matching calls:';
+  else;
+    txt += ', but no call matched. Matching calls:';
+  endif;
+  for i = 1 to nIds;
+    if callMatches(ids(i) : m : nM : tgt);
+      n += 1;
+      if n > 5;
+        txt += ' ...';
+        leave;
+      endif;
+      txt += ' ' + describeCall(ids(i));
+    endif;
+  endfor;
+  if n = 0;
+    txt += ' none';
+  endif;
+  if %len(txt) > 512;
+    txt = %subst(txt : 1 : 509) + '...';
+  endif;
+  setErr(err : 'IMQ0200' : txt);
+  return *off;
+end-proc;
+
+// imoq_startOrder() - the next order check may match any call
+dcl-proc imoq_startOrder export;
+  gOrderPos = 0;
 end-proc;
 
 // IMOQNOMORE --------------------------------------------------------

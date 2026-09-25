@@ -34,8 +34,9 @@ IMOQRMV
   - loose or strict mocks
   - data structure subfields, array elements and data structure return
     values, each matched and set by its own type
-- **Verification:** exact, at-least, at-most and never counts,
-  `IMOQNOMORE`, unused-stub detection (`IMOQUNUSED`) and argument capture.
+- **Verification:** exact, at-least, at-most and never counts, call order
+  (`IMOQORDER`), `IMOQNOMORE`, unused-stub detection (`IMOQUNUSED`) and
+  argument capture.
   Failure messages list the calls that actually happened.
 - **No recompiles between tests.** Stubs are stored as data, so you create
   mocks once per driver and restub them in every test.

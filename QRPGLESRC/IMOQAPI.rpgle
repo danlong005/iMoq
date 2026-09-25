@@ -726,6 +726,23 @@ dcl-proc imoq_calledAtMost export;
   return runCheck(s : '*ATMOST' : n : cnt);
 end-proc;
 
+// imoq_calledInOrder(v) - *on if a matching call came after the call
+// the previous order check matched; that call becomes the new position
+dcl-proc imoq_calledInOrder export;
+  dcl-pi *n ind;
+    h int(10) const;
+  end-pi;
+  dcl-ds err likeds(imoq_err_t);
+  dcl-s s int(10);
+  s = vSlot(h);
+  if s = 0;
+    fail(gMsg);
+    return *off;
+  endif;
+  return imoq_verifyOrder(gV(s).obj : gV(s).proc : gV(s).m : gV(s).nM
+                          : *off : err);
+end-proc;
+
 // Number of recorded calls that match (does not mark them verified)
 dcl-proc imoq_matchCount export;
   dcl-pi *n int(10);

@@ -29,6 +29,7 @@ For the concepts behind the examples, see the
   - [EXFIELD: data structures, arrays and data structure returns](#exfield-data-structures-arrays-and-data-structure-returns)
 - Checking what happened
   - [EXVERIFY: check how often something was called](#exverify-check-how-often-something-was-called)
+  - [EXORDER: check the order of calls](#exorder-check-the-order-of-calls)
   - [EXNOMORE: make sure nothing else was called](#exnomore-make-sure-nothing-else-was-called)
   - [EXUNUSED: find stubs that no call used](#exunused-find-stubs-that-no-call-used)
   - [EXCAPT: look at the arguments](#excapt-look-at-the-arguments)
@@ -568,6 +569,47 @@ What to notice:
 - **Quote mixed-case values.** An unquoted `working` would be uppercased by CL.
 - **Pass `imoq_lastError()` as the assertion message** so a failure explains
   itself.
+
+### EXORDER: check the order of calls
+
+Test program [`EXORDER_T`](../examples/QRPGLESRC/EXORDER_T.rpgle), driver [`EXORDER`](../examples/QCLLESRC/EXORDER.clle)
+
+```rpgle
+lockCust('C0042');
+getCustomer('C0042' : name : found);
+unlockCust('C0042');
+
+expect(imoq_ok('IMOQORDER OBJ(EXLOCK) PROC(EX_LOCK) +
+                ARGS((1 *EQ C0042))') : imoq_lastError());
+expect(imoq_ok('IMOQORDER OBJ(EXCUST) ARGS((1 *EQ C0042))')
+       : imoq_lastError());
+expect(imoq_ok('IMOQORDER OBJ(EXLOCK) PROC(EX_UNLOCK)')
+       : imoq_lastError());
+```
+
+With the RPG API, where the code under test reads the customer after
+unlocking it:
+
+```rpgle
+v = imoq_verify('EXLOCK' : 'EX_LOCK');
+expect(imoq_calledInOrder(v) : imoq_lastError());
+v = imoq_verify('EXCUST');
+imoq_with(v : 1 : IMOQ_EQ : 'C0042');
+expect(imoq_calledInOrder(v) : imoq_lastError());
+v = imoq_verify('EXLOCK' : 'EX_UNLOCK');
+expect(not imoq_calledInOrder(v) : 'API: the unlock came too early');
+expect(imoq_calledOnce(v) : imoq_lastError());
+```
+
+What to notice:
+- **Each step must come after the previous step's call.** Other calls may
+  come in between.
+- **Order is checked only where you ask.** `imoq_calledOnce` still passes for
+  the early unlock: counting checks never look at the order.
+- **`AFTER(*START)` or `imoq_startOrder()` begins a new sequence.**
+  `IMOQRESET` of the recorded calls does too.
+- **A failure says where the sequence stood,** such as `after
+  EXLOCK.EX_UNLOCK#3('C0042')`, and lists when the matching calls happened.
 
 ### EXNOMORE: make sure nothing else was called
 
