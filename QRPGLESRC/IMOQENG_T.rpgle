@@ -23,6 +23,7 @@ dcl-proc runTests;
   test_encodeErrors();
   test_invalidPacked();
   test_matchers();
+  test_listMatchers();
   test_numText();
   test_byteSize();
   test_parseField();
@@ -173,6 +174,49 @@ dcl-proc test_matchers;
   tst_check(imoq_match('*ANY' : '' : 'N' : '' : c) : 'any');
   tst_check(not imoq_match('*EQ' : 'x' : 'P' : 'abc' : n)
           : 'non-numeric compare is false');
+  tst_end();
+end-proc;
+
+dcl-proc test_listMatchers;
+  dcl-ds n likeds(imoq_def_t);
+  dcl-ds c likeds(imoq_def_t);
+  dcl-ds d likeds(imoq_def_t);
+  tst_begin('*IN and *BETWEEN');
+  n = mdef('*PACKED' : 7 : 2);
+  c = mdef('*CHAR' : 10 : 0);
+  d = mdef('*DATE' : 0 : 0);
+  tst_check(imoq_match('*IN' : 'PA,NJ,NY' : 'P' : 'NJ' : c) : 'in: middle');
+  tst_check(imoq_match('*IN' : 'PA, NJ , NY' : 'P' : 'NY   ' : c)
+          : 'in: blanks around items are ignored');
+  tst_check(not imoq_match('*IN' : 'PA,NJ,NY' : 'P' : 'N' : c)
+          : 'in: whole items only');
+  tst_check(imoq_match('*IN' : 'PA' : 'P' : 'PA' : c) : 'in: one item');
+  tst_check(imoq_match('*IN' : 'PA,,NY' : 'P' : '' : c)
+          : 'in: an empty item matches blanks');
+  tst_check(imoq_match('*IN' : '1,2.5,3' : 'P' : '2.50' : n)
+          : 'in: numbers compare as numbers');
+  tst_check(not imoq_match('*IN' : '1,2,3' : 'P' : '4.00' : n)
+          : 'in: number not listed');
+  tst_check(not imoq_match('*IN' : 'PA' : 'O' : '' : c)
+          : 'in: omitted never matches');
+  tst_check(imoq_match('*BETWEEN' : '10,20' : 'P' : '10.00' : n)
+          : 'between: low included');
+  tst_check(imoq_match('*BETWEEN' : '10,20' : 'P' : '20.00' : n)
+          : 'between: high included');
+  tst_check(imoq_match('*BETWEEN' : '10, 20' : 'P' : '15.50' : n)
+          : 'between: inside');
+  tst_check(not imoq_match('*BETWEEN' : '10,20' : 'P' : '9.99' : n)
+          : 'between: below');
+  tst_check(not imoq_match('*BETWEEN' : '10,20' : 'P' : '20.01' : n)
+          : 'between: above');
+  tst_check(imoq_match('*BETWEEN' : '-5,5' : 'P' : '-5.00' : n)
+          : 'between: negative numbers');
+  tst_check(imoq_match('*BETWEEN' : 'B,D' : 'P' : 'C9999' : c)
+          : 'between: text');
+  tst_check(imoq_match('*BETWEEN' : '2026-01-01,2026-12-31' : 'P'
+                       : '2026-06-30' : d) : 'between: dates');
+  tst_check(not imoq_match('*BETWEEN' : '10' : 'P' : '10.00' : n)
+          : 'between: one value never matches');
   tst_end();
 end-proc;
 

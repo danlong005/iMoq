@@ -29,7 +29,7 @@ IMOQRMV
   no dummy programs.
 - **Stubbing:**
   - return values, output parameters and escape messages
-  - argument matchers (`*EQ`, `*GT`, `*LIKE`, `*OMIT`, …)
+  - argument matchers (`*EQ`, `*GT`, `*LIKE`, `*IN`, `*BETWEEN`, `*OMIT`, …)
   - consecutive answers and `TIMES(n)` limits
   - loose or strict mocks
   - data structure subfields, array elements and data structure return

@@ -31,6 +31,7 @@ dcl-proc runTests;
   tst_init(report);
   if setup();
     test_selection();
+    test_listMatchers();
     test_series();
     test_times();
     test_strict();
@@ -159,6 +160,39 @@ dcl-proc test_selection;
     cmd('IMOQRESET SCOPE(*STUBS)');
     tst_eqNum(0 : price('A0001') : 'loose mock without stubs');
     tst_check(gThrown = ' ' : 'a loose mock sent ' + gThrown);
+  on-error;
+    tst_error(imoq_lastError());
+  endmon;
+  tst_end();
+end-proc;
+
+dcl-proc test_listMatchers;
+  tst_begin('*IN and *BETWEEN match lists and ranges');
+  monitor;
+    cmd('IMOQRESET');
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(PRICE) +
+         ARGS((1 *IN ''A0001, B0002'')) RETURN(1)');
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) +
+         ARGS((2 *BETWEEN ''10,20'')) SETPARM((2 0))');
+    tst_eqNum(1 : price('B0002') : '*IN: listed');
+    tst_eqNum(0 : price('C0003') : '*IN: not listed');
+    tst_eqNum(0 : setQty('A0001' : 10) : '*BETWEEN: low');
+    tst_eqNum(0 : setQty('A0001' : 20) : '*BETWEEN: high');
+    tst_eqNum(21 : setQty('A0001' : 21) : '*BETWEEN: above');
+
+    cmd('IMOQVERIFY OBJ(IMQTSRV) PROC(PRICE) +
+         ARGS((1 *IN ''C0003,Z9999'')) TIMES(*ONCE)');
+    cmd('IMOQVERIFY OBJ(IMQTSRV) PROC(SETQTY) +
+         ARGS((2 *BETWEEN ''1,20'')) TIMES(*EXACTLY 2)');
+
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) ARGS((2 *BETWEEN 5))'
+          : 'two values separated by a comma');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) ARGS((2 *BETWEEN ''20,10''))'
+          : 'is greater than high value');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) ARGS((2 *IN ''1,x''))'
+          : '*IN value 2');
+    fails('IMOQVERIFY OBJ(IMQTSRV) PROC(PRICE) +
+           ARGS((1 *BETWEEN ''A,B,C''))' : 'two values');
   on-error;
     tst_error(imoq_lastError());
   endmon;

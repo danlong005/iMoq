@@ -163,7 +163,35 @@ dcl-proc imoq_validMatcher export;
   return matcher = '*ANY' or matcher = '*EQ' or matcher = '*NE'
       or matcher = '*GT' or matcher = '*GE' or matcher = '*LT'
       or matcher = '*LE' or matcher = '*LIKE' or matcher = '*BLANK'
-      or matcher = '*OMIT' or matcher = '*NOTPASSED';
+      or matcher = '*OMIT' or matcher = '*NOTPASSED'
+      or matcher = '*IN' or matcher = '*BETWEEN';
+end-proc;
+
+// ==================================================================
+// imoq_splitList - the items of a *IN or *BETWEEN value: separated
+// by commas, each without leading or trailing blanks
+// ==================================================================
+dcl-proc imoq_splitList export;
+  dcl-pi *n int(10);
+    text varchar(1024) const;
+    items varchar(1024) dim(64);
+  end-pi;
+  dcl-s rest varchar(1024);
+  dcl-s n int(10);
+  dcl-s p int(10);
+
+  rest = text;
+  dow n < %elem(items);
+    n += 1;
+    p = %scan(',' : rest);
+    if p = 0;
+      items(n) = %trim(rest);
+      leave;
+    endif;
+    items(n) = %trim(%subst(rest : 1 : p - 1));
+    rest = %subst(rest : p + 1);
+  enddo;
+  return n;
 end-proc;
 
 // ==================================================================
@@ -483,6 +511,9 @@ dcl-proc imoq_match export;
   end-pi;
 
   dcl-s rc int(10);
+  dcl-s items varchar(1024) dim(64);
+  dcl-s n int(10);
+  dcl-s i int(10);
 
   select;
   when matcher = '*ANY';
@@ -508,19 +539,33 @@ dcl-proc imoq_match export;
     return %trim(actual) = '';
   endif;
 
-  if imoq_isNumeric(def.type);
-    rc = compareNum(actual : expected : def);
-    if rc = -2;
+  // One of the listed values
+  if matcher = '*IN';
+    n = imoq_splitList(expected : items);
+    for i = 1 to n;
+      if compareVal(actual : items(i) : def) = 0;
+        return *on;
+      endif;
+    endfor;
+    return *off;
+  endif;
+
+  // low,high, both included
+  if matcher = '*BETWEEN';
+    if imoq_splitList(expected : items) <> 2;
       return *off;
     endif;
-  else;
-    if %trimr(actual) = %trimr(expected);
-      rc = 0;
-    elseif %trimr(actual) < %trimr(expected);
-      rc = -1;
-    else;
-      rc = 1;
+    rc = compareVal(actual : items(1) : def);
+    if rc < 0;
+      return *off;
     endif;
+    rc = compareVal(actual : items(2) : def);
+    return rc = 0 or rc = -1;
+  endif;
+
+  rc = compareVal(actual : expected : def);
+  if rc = -2;
+    return *off;
   endif;
 
   select;
@@ -538,6 +583,28 @@ dcl-proc imoq_match export;
     return rc <= 0;
   endsl;
   return *off;
+end-proc;
+
+// ------------------------------------------------------------------
+// compareVal - compare an argument with a matcher value: -1/0/1, or
+// -2 when a number doesn't convert. Numbers compare as numbers,
+// anything else as text without trailing blanks.
+// ------------------------------------------------------------------
+dcl-proc compareVal;
+  dcl-pi *n int(10);
+    actual varchar(1024) const;
+    expected varchar(1024) const;
+    def likeds(imoq_def_t) const;
+  end-pi;
+  if imoq_isNumeric(def.type);
+    return compareNum(actual : expected : def);
+  endif;
+  if %trimr(actual) = %trimr(expected);
+    return 0;
+  elseif %trimr(actual) < %trimr(expected);
+    return -1;
+  endif;
+  return 1;
 end-proc;
 
 // ------------------------------------------------------------------

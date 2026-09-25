@@ -77,6 +77,8 @@ dcl-c IMOQ_ANY '*ANY';
 dcl-c IMOQ_BLANK '*BLANK';
 dcl-c IMOQ_OMIT '*OMIT';
 dcl-c IMOQ_NOTPASSED '*NOTPASSED';
+dcl-c IMOQ_IN '*IN';             // 'PA,NJ,NY': one of the values
+dcl-c IMOQ_BETWEEN '*BETWEEN';   // '10,20': low to high, both included
 
 dcl-c IMOQ_MOCK '*MOCK';     // imoq_throws: message IMQ0101
 dcl-c IMOQ_ALWAYS -1;        // imoq_times: answer every call

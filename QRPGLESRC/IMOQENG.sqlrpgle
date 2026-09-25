@@ -776,6 +776,9 @@ dcl-proc checkMatcher;
   dcl-s msg varchar(256);
   dcl-ds d likeds(imoq_def_t);
   dcl-s off int(10);
+  dcl-s items varchar(1024) dim(64);
+  dcl-s n int(10);
+  dcl-s i int(10);
 
   m.matcher = %xlate(LOWER : UPPER : m.matcher);
   if m.parmNo = 0;
@@ -811,6 +814,38 @@ dcl-proc checkMatcher;
       return *off;
     endif;
     d = tgt.defs(m.parmNo);
+  endif;
+
+  // *IN value,value,... and *BETWEEN low,high
+  if m.matcher = '*IN' or m.matcher = '*BETWEEN';
+    if %len(m.val) - %len(%scanrpl(',' : '' : m.val)) >= %elem(items);
+      setErr(err : 'IMQ0014' : what + ': ' + %trim(m.matcher)
+           + ' takes at most 64 values');
+      return *off;
+    endif;
+    n = imoq_splitList(m.val : items);
+    if m.matcher = '*BETWEEN' and n <> 2;
+      setErr(err : 'IMQ0014' : what + ': *BETWEEN takes two values '
+           + 'separated by a comma, low,high; not ''' + m.val + '''');
+      return *off;
+    endif;
+    if imoq_isNumeric(d.type);
+      for i = 1 to n;
+        if not canEncode(d : items(i) : msg);
+          setErr(err : 'IMQ0014' : what + ': ' + %trim(m.matcher)
+               + ' value ' + %char(i) + ': ' + msg);
+          return *off;
+        endif;
+      endfor;
+    endif;
+    if m.matcher = '*BETWEEN'
+       and not imoq_match('*LE' : items(2) : 'P' : items(1) : d);
+      setErr(err : 'IMQ0014' : what + ': *BETWEEN low value '''
+           + items(1) + ''' is greater than high value '''
+           + items(2) + '''');
+      return *off;
+    endif;
+    return *on;
   endif;
 
   if imoq_isNumeric(d.type)

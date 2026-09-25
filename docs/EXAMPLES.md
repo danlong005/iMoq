@@ -274,11 +274,17 @@ imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_PRICE) +
       ARGS((1 *BLANK)) RETURN(''0.50'')');
 imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_DISCOUNT) +
       ARGS((1 *GT 100)) RETURN(''10.00'')');
+imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_PRICE) +
+      ARGS((1 *IN ''C0003,D0004'')) RETURN(''3.00'')');
+imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_DISCOUNT) +
+      ARGS((1 *BETWEEN ''60,70'')) RETURN(''5.00'')');
 
 expect(getPrice('A0001') = 1.00 : '*EQ A0001');
 expect(getPrice('B7777') = 2.00 : '*LIKE B%');
 expect(getPrice(' ') = 0.50 : '*BLANK');
 expect(getDiscount(150.00) = 10.00 : '*GT 100');
+expect(getPrice('D0004') = 3.00 : '*IN C0003,D0004');
+expect(getDiscount(70.00) = 5.00 : '*BETWEEN 60,70');
 expect(getPrice('Z9999') = 0 : 'no match returns zero');
 ```
 
@@ -286,7 +292,10 @@ What to notice:
 - **`ARGS` entries are `(parameter matcher value)`.** Every entry must match for
   the stub to answer.
 - **The matchers are** `*EQ`, `*NE`, `*GT`, `*GE`, `*LT`, `*LE`, `*LIKE` (`%` is
-  any text, `_` is one character), `*BLANK`, `*ANY`, `*OMIT` and `*NOTPASSED`.
+  any text, `_` is one character), `*BLANK`, `*ANY`, `*IN`, `*BETWEEN`, `*OMIT`
+  and `*NOTPASSED`.
+- **`*IN` and `*BETWEEN` take values separated by commas.** `*IN` matches any
+  of them; `*BETWEEN` takes `low,high` and includes both ends. Quote the value.
 - **Numbers compare as numbers**, so `150.00` is greater than `100`.
 - **A loose mock returns zero or blanks when nothing matches.**
 
@@ -807,7 +816,7 @@ jobs with the RPG API, one test procedure per topic:
 | Procedure | Shows |
 |---|---|
 | `stubbing` | `imoq_when`, a series of `imoq_returns`, `imoq_setParm`, `imoq_times(h : 1)` and `IMOQ_ALWAYS`, and the newest stub winning |
-| `matchers` | All eleven matchers: `IMOQ_EQ`, `NE`, `LIKE`, `BLANK` on text; `GT`, `GE`, `LT`, `LE` on numbers (two on one parameter make a range); `ANY`, `OMIT`, `NOTPASSED` on an optional parameter |
+| `matchers` | All thirteen matchers: `IMOQ_EQ`, `NE`, `LIKE`, `BLANK` on text; `GT`, `GE`, `LT`, `LE` on numbers (two on one parameter make a range); `IN` and `BETWEEN` with comma-separated values; `ANY`, `OMIT`, `NOTPASSED` on an optional parameter |
 | `typedValues` | Times and timestamps in `imoq_with`, numbers and dates in `imoq_setParm`, timestamp and time return values |
 | `throwing` | `imoq_throws` with `IMOQ_MOCK` (IMQ0101) and with `CPF9898` from `QCPFMSG` |
 | `verifying` | `imoq_verify` with `imoq_calledOnce`, `imoq_calledTimes`, `imoq_calledAtLeast`, `imoq_calledAtMost`, `imoq_neverCalled`, `imoq_matchCount`, `imoq_noMoreCalls` with and without a mock name, and a failed check's message. `imoq_noUnusedStubs` is in [EXUNUSED](#exunused-find-stubs-that-no-call-used) |

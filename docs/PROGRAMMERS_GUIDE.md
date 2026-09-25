@@ -414,7 +414,16 @@ IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) ARGS((1 *GT 1000)) RETURN('99.00')
 IMOQWHEN OBJ(CUSTLKUP) ARGS((1 *LIKE 'C_9%')) SETPARM((3 '1'))
 ```
 
-The matchers are `*EQ` (default), `*NE`, `*GT`, `*GE`, `*LT`, `*LE`, `*LIKE` (`%` any text, `_` one character), `*BLANK` (blanks, or zero for numbers), `*ANY`, `*OMIT` and `*NOTPASSED`. Numeric parameters compare as numbers, so `100` matches `100.00`. Character comparisons ignore trailing blanks. All matchers in one `ARGS` must match.
+The matchers are `*EQ` (default), `*NE`, `*GT`, `*GE`, `*LT`, `*LE`, `*LIKE` (`%` any text, `_` one character), `*BLANK` (blanks, or zero for numbers), `*IN`, `*BETWEEN`, `*ANY`, `*OMIT` and `*NOTPASSED`. Numeric parameters compare as numbers, so `100` matches `100.00`. Character comparisons ignore trailing blanks. All matchers in one `ARGS` must match.
+
+`*IN` and `*BETWEEN` take several values in one, separated by commas; blanks around each value are ignored:
+
+```
+IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) ARGS((2 *IN 'PA,NJ,NY')) RETURN('6.00')
+IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) ARGS((1 *BETWEEN '100,500')) RETURN('9.00')
+```
+
+`*IN` matches any of up to 64 values. `*BETWEEN` takes exactly two, `low,high`, and includes both ends. A value can't contain a comma itself. In the RPG API, pass the list as text: `imoq_with(h : 2 : IMOQ_IN : 'PA,NJ,NY')`.
 
 ### A default answer plus special cases
 

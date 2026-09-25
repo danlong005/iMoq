@@ -21,7 +21,8 @@
                           PROMPT('Parameter number')
              ELEM       TYPE(*CHAR) LEN(10) RSTD(*YES) DFT(*EQ) +
                           VALUES(*ANY *EQ *NE *GT *GE *LT *LE *LIKE +
-                          *BLANK *OMIT *NOTPASSED) PROMPT('Matcher')
+                          *BLANK *OMIT *NOTPASSED *IN *BETWEEN) +
+                          PROMPT('Matcher')
              ELEM       TYPE(*CHAR) LEN(256) VARY(*YES *INT2) +
                           CASE(*MIXED) DFT(' ') PROMPT('Value')
              ELEM       TYPE(*CHAR) LEN(40) DFT(' ') +

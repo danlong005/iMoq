@@ -4,7 +4,7 @@
 //
 //   stubbing     imoq_when, imoq_returns (series), imoq_setParm,
 //                imoq_times, IMOQ_ALWAYS
-//   matchers     all eleven IMOQ_ matchers with imoq_with
+//   matchers     all thirteen IMOQ_ matchers with imoq_with
 //   typedValues  numbers, dates, times and timestamps in imoq_with,
 //                imoq_returns and imoq_setParm
 //   throwing     imoq_throws with IMOQ_MOCK and with a real message
@@ -167,6 +167,20 @@ dcl-proc matchers;
   expect(getDiscount(50) = 2 : 'IMOQ_GE 50 and IMOQ_LE 60: 50');
   expect(getDiscount(60) = 2 : 'IMOQ_GE 50 and IMOQ_LE 60: 60');
   expect(getDiscount(70) = 0 : '70 matches no stub');
+
+  // Lists and ranges: the values are text, separated by commas
+  imoq_reset();
+  h = imoq_when('EXPRICE' : 'EX_PRICE');
+  imoq_with(h : 1 : IMOQ_IN : 'A0001,B0002,C0003');
+  imoq_returns(h : 5);
+  h = imoq_when('EXPRICE' : 'EX_DISCOUNT');
+  imoq_with(h : 1 : IMOQ_BETWEEN : '50,60');  // both ends included
+  imoq_returns(h : 2);
+
+  expect(getPrice('B0002') = 5 : 'IMOQ_IN');
+  expect(getPrice('D0004') = 0 : 'D0004 is not in the list');
+  expect(getDiscount(60) = 2 : 'IMOQ_BETWEEN 50,60: 60');
+  expect(getDiscount(61) = 0 : '61 is outside the range');
 
   // Optional parameters: passed, omitted or not passed at all
   imoq_reset();

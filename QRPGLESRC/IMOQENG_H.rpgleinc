@@ -116,6 +116,12 @@ dcl-pr imoq_validMatcher ind extproc('IMOQ_VALIDMATCHER');
   matcher char(10) const;
 end-pr;
 
+// Items of a *IN or *BETWEEN value (comma-separated, trimmed)
+dcl-pr imoq_splitList int(10) extproc('IMOQ_SPLITLIST');
+  text varchar(1024) const;
+  items varchar(1024) dim(64);
+end-pr;
+
 // ---- Source generation (IMOQGEN) ---------------------------------
 dcl-pr imoq_genPgm ind extproc('IMOQ_GENPGM');
   obj char(10) const;

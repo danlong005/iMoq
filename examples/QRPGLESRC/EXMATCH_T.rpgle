@@ -3,8 +3,8 @@
 // EXMATCH_T - Answer differently depending on the arguments
 //
 // Features: IMOQWHEN ARGS((parm matcher value))
-// Matchers: *EQ *NE *GT *GE *LT *LE *LIKE *BLANK *ANY
-//           *OMIT *NOTPASSED (see EXOMIT)
+// Matchers: *EQ *NE *GT *GE *LT *LE *LIKE *BLANK *ANY *IN
+//           *BETWEEN *OMIT *NOTPASSED (see EXOMIT)
 // Run it with the driver EXMATCH.
 // ------------------------------------------------------------------
 ctl-opt main(main);
@@ -42,11 +42,19 @@ dcl-proc main;
   // Numbers compare as numbers: amounts over 100 get 10.00 off
   imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_DISCOUNT) +
         ARGS((1 *GT 100)) RETURN(''10.00'')');
+  // Parameter 1 is one of a list, separated by commas
+  imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_PRICE) +
+        ARGS((1 *IN ''C0003,D0004'')) RETURN(''3.00'')');
+  // Parameter 1 is in a range: low,high, both ends included
+  imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_DISCOUNT) +
+        ARGS((1 *BETWEEN ''60,70'')) RETURN(''5.00'')');
 
   expect(getPrice('A0001') = 1.00 : '*EQ A0001');
   expect(getPrice('B7777') = 2.00 : '*LIKE B%');
   expect(getPrice(' ') = 0.50 : '*BLANK');
   expect(getDiscount(150.00) = 10.00 : '*GT 100');
+  expect(getPrice('D0004') = 3.00 : '*IN C0003,D0004');
+  expect(getDiscount(70.00) = 5.00 : '*BETWEEN 60,70');
 
   // No stub matches: a loose mock returns zero
   expect(getPrice('Z9999') = 0 : 'no match returns zero');
