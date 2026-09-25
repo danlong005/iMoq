@@ -1,7 +1,7 @@
 # iMoq to-do list
 
 Work still to do on iMoq, from a review of its features and gaps
-(2026-09-22, updated 2026-09-25 after in-order verification). Items are
+(2026-09-22, updated 2026-09-25 after the command-level tests). Items are
 roughly in priority order within each section.
 
 ## Features
@@ -27,10 +27,9 @@ roughly in priority order within each section.
 
 ## Testing
 
-- [ ] Unit tests for command-level behavior (stub selection, `TIMES`, strict
-      mode, verification counts, reset scopes). `IMOQENG_T` covers only value
-      conversion and matchers; the rest is tested only through the examples
-      and the demo.
+- [ ] Unit tests for the RPG API (`imoq_when`, `imoq_verify` and the typed
+      getters). `IMOQCMD_T` covers the engine through the commands; the API
+      is tested only through `EXAPI` and the demo.
 - [ ] Test `IMOQRU_H`, the RPGUnit assertions. RPGUnit isn't installed on
       pub400, so nothing has compiled or run it yet.
 

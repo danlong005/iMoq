@@ -126,11 +126,11 @@ An optional second parameter names a different library holding the four source f
 
 | Driver | Tests | What it covers |
 |---|---|---|
-| `IMOQTEST` | `IMOQENG_T` | Value conversion for every type, rejected values, decimal data errors, matchers |
+| `IMOQTEST` | `IMOQENG_T`, `IMOQCMD_T` | Value conversion for every type, rejected values, decimal data errors, matchers; and, through the commands, stub selection, consecutive returns, `TIMES`, strict mocks, `THROW`, `SETPARM`, verification counts, `IMOQNOMORE`, `IMOQORDER`, `IMOQUNUSED`, argument capture, reset scopes and rejected stubs |
 | `EXAMPLES` (from `examples/`) | Drivers `EXPGM` … `EXERRMSG` (test programs `EX…_T`), `EXCL` | One small example per feature; see [Examples](EXAMPLES.md) |
 | `IMOQDEMO` (from `examples/`) | `DEMOCUT_T` with `DEMOCUT`, `DEMODEP`, `DEMOSRV` | End to end: hidden-mock detection, program and strict service program mocks, stubs, throws, consecutive returns, argument capture, verification messages, the CL-only commands, bad-binding detection, cleanup |
 
-Run them with `BUILD` and `'*YES'`, which also copies the example source from the repository's `examples` folder into the library. After a build, you can also run them with `CALL IMOQ/IMOQTEST PARM('IMOQ')`, `CALL IMOQ/IMOQDEMO PARM('IMOQ')` and `CALL IMOQ/EXAMPLES PARM('IMOQ')`. Each sends a diagnostic message per test to the job log and ends with a completion message, or with an escape message giving the number of failures. `IMOQDEMO` and `EXAMPLES` change the current library and library list of the job that runs them.
+Run them with `BUILD` and `'*YES'`, which also copies the example source from the repository's `examples` folder into the library. After a build, you can also run them with `CALL IMOQ/IMOQTEST PARM('IMOQ')`, `CALL IMOQ/IMOQDEMO PARM('IMOQ')` and `CALL IMOQ/EXAMPLES PARM('IMOQ')`. Each sends a diagnostic message per test to the job log and ends with a completion message, or with an escape message giving the number of failures. `IMOQTEST` adds the library to the library list, and `IMOQDEMO` and `EXAMPLES` change the current library and library list of the job that runs them.
 
 ---
 

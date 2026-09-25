@@ -120,8 +120,8 @@ physical file.
 | `docs` | Programmer's Guide and Examples |
 | `tools` | `pub400-build.sh`: the maintainer's build-and-test run on pub400. It clears its build library first, so point `LIB` at scratch space only |
 
-The engine's unit tests, `IMOQTEST` and `IMOQENG_T` (with the `IMOQTST_H`
-harness), stay with the library code. The `examples` folder holds two kinds of
+The unit tests, `IMOQTEST` with `IMOQENG_T` and `IMOQCMD_T` (and the
+`IMOQTST_H` harness), stay with the library code. The `examples` folder holds two kinds of
 example:
 - **Feature examples:** one feature each, as a test program `EX…_T` (RPG)
   plus a small CL driver `EX…` that creates the mocks and runs it. Most run

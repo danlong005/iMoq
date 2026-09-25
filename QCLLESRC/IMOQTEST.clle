@@ -1,5 +1,6 @@
 /* ---------------------------------------------------------------- */
-/* IMOQTEST - build and run the iMoq engine unit tests              */
+/* IMOQTEST - build and run the iMoq unit tests: IMOQENG_T (codec,  */
+/*            matchers) and IMOQCMD_T (command-level behavior)      */
 /*   CALL IMOQTEST PARM('IMOQ' 'SRCLIB')                            */
 /*   1: iMoq library (default: current library)                     */
 /*   2: library holding the source files (default: parameter 1)     */
@@ -11,6 +12,8 @@
              DCL        VAR(&SRCLIB) TYPE(*CHAR) LEN(10)
              DCL        VAR(&REPORT) TYPE(*CHAR) LEN(8000)
              DCL        VAR(&FAILS) TYPE(*INT) LEN(4)
+             DCL        VAR(&TOTAL) TYPE(*INT) LEN(4)
+             DCL        VAR(&PGM) TYPE(*CHAR) LEN(10)
              DCL        VAR(&I) TYPE(*INT) LEN(4)
              DCL        VAR(&POS) TYPE(*INT) LEN(4)
              DCL        VAR(&LINE) TYPE(*CHAR) LEN(200)
@@ -36,19 +39,15 @@
              CPYSRCF    FROMFILE(&SRCLIB/QRPGLESRC) TOFILE(QTEMP/IMOQINC) +
                           FROMMBR(IMOQTST_H)
 
-             CRTRPGMOD  MODULE(QTEMP/IMOQENG_T) +
-                          SRCFILE(&SRCLIB/QRPGLESRC) SRCMBR(IMOQENG_T)
-             CRTPGM     PGM(&LIB/IMOQENG_T) MODULE(QTEMP/IMOQENG_T) +
-                          BNDSRVPGM((&LIB/IMOQENG)) ACTGRP(*NEW)
-             CALL       PGM(&LIB/IMOQENG_T) PARM(&REPORT &FAILS)
+/* IMOQCMD_T runs iMoq commands, so they must be in the library list */
+             ADDLIBLE   LIB(&LIB) POSITION(*LAST)
+             MONMSG     MSGID(CPF2103)
 
-             DOFOR      VAR(&I) FROM(1) TO(40)
-             CHGVAR     VAR(&POS) VALUE((&I - 1) * 200 + 1)
-             CHGVAR     VAR(&LINE) VALUE(%SST(&REPORT &POS 200))
-             IF         COND(&LINE *NE ' ') THEN(SNDPGMMSG +
-                          MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA(&LINE) +
-                          MSGTYPE(*DIAG))
-             ENDDO
+             CHGVAR     VAR(&PGM) VALUE('IMOQENG_T')
+             CALLSUBR   SUBR(RUN)
+             CHGVAR     VAR(&PGM) VALUE('IMOQCMD_T')
+             CALLSUBR   SUBR(RUN)
+             CHGVAR     VAR(&FAILS) VALUE(&TOTAL)
 
              IF         COND(&FAILS *GT 0) THEN(DO)
              CHGVAR     VAR(&NBR) VALUE(%CHAR(&FAILS))
@@ -65,4 +64,24 @@
              SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) MSGDTA('IMOQTEST +
                           stopped:' *BCAT &MSG) MSGTYPE(*ESCAPE)
              MONMSG     MSGID(CPF0000)
+             RETURN
+
+/* ---- compile and run one test program, then list its report ---- */
+             SUBR       SUBR(RUN)
+             CRTRPGMOD  MODULE(QTEMP/&PGM) SRCFILE(&SRCLIB/QRPGLESRC) +
+                          SRCMBR(&PGM)
+             CRTPGM     PGM(&LIB/&PGM) MODULE(QTEMP/&PGM) +
+                          BNDSRVPGM((&LIB/IMOQENG)) ACTGRP(*NEW)
+             CHGVAR     VAR(&FAILS) VALUE(0)
+             CALL       PGM(&LIB/&PGM) PARM(&REPORT &FAILS)
+             CHGVAR     VAR(&TOTAL) VALUE(&TOTAL + &FAILS)
+
+             DOFOR      VAR(&I) FROM(1) TO(40)
+             CHGVAR     VAR(&POS) VALUE((&I - 1) * 200 + 1)
+             CHGVAR     VAR(&LINE) VALUE(%SST(&REPORT &POS 200))
+             IF         COND(&LINE *NE ' ') THEN(SNDPGMMSG +
+                          MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA(&LINE) +
+                          MSGTYPE(*DIAG))
+             ENDDO
+             ENDSUBR
              ENDPGM
