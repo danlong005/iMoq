@@ -29,6 +29,8 @@ IMOQRMV
   no dummy programs.
 - **Stubbing:**
   - return values, output parameters and escape messages
+  - answers built from the arguments: copy an argument into an output
+    (`COPYARG`), or compute the answer in your own procedure (`ANSWER`)
   - argument matchers (`*EQ`, `*GT`, `*LIKE`, `*IN`, `*BETWEEN`, `*OMIT`, …)
   - consecutive answers and `TIMES(n)` limits
   - loose or strict mocks

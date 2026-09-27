@@ -57,6 +57,37 @@ dcl-s gLastStub int(10);
 // Call the last successful order check matched (IMOQORDER); 0 = none
 dcl-s gOrderPos int(10);
 
+// Answer procedures passed as pointers (imoq_answers), by stub
+// number. The stub table records them as ANSOBJ *PROCPTR.
+dcl-c PTRANSWER '*PROCPTR';
+dcl-ds gPtrAns qualified dim(MAXSTUBS);
+  id int(10);
+  ptr pointer(*proc);
+end-ds;
+dcl-s gNPtrAns int(10);
+
+// The call an answer procedure is answering, for imoq_answerGet
+// and imoq_answerPut. imoq_invoke saves and restores it, so a mock
+// called from inside an answer procedure has its own.
+dcl-ds ans_t qualified template;
+  active ind;
+  obj char(10);
+  proc varchar(4096);
+  callId int(10);
+  nPassed int(10);
+  parmPtrs pointer;
+  rtnPtr pointer;
+  // *on once something wrote the return value
+  rtnSet ind;
+end-ds;
+dcl-ds gAns likeds(ans_t);
+
+// The answer procedure or program imoq_invoke calls next
+dcl-s gAnsCall pointer(*proc);
+dcl-s gAnsPgm char(21);
+dcl-pr answerProc extproc(gAnsCall) end-pr;
+dcl-pr answerPgm extpgm(gAnsPgm) end-pr;
+
 dcl-ds apiErr_t qualified template;
   bytesProv int(10);
   bytesAvail int(10);
@@ -87,6 +118,38 @@ dcl-pr qusrobjd extpgm('QUSROBJD');
   format char(8) const;
   objQual char(20) const;
   objType char(10) const;
+  errCode likeds(apiErr_t);
+end-pr;
+
+// System pointer to an object (MI built-ins). The template is the
+// object type (2), name (30) and required authority (2); _RSLVSP4
+// looks in the library lib points to.
+dcl-pr rslvsp2 extproc('_RSLVSP2');
+  ptr pointer(*proc);
+  tmpl char(34) const;
+end-pr;
+
+dcl-pr rslvsp4 extproc('_RSLVSP4');
+  ptr pointer(*proc);
+  tmpl char(34) const;
+  lib pointer(*proc) const;
+end-pr;
+
+dcl-pr qleActBndPgm extproc('QleActBndPgm');
+  srvpgm pointer(*proc);
+  actMark int(10) options(*omit);
+  actInfo char(64) options(*omit);
+  actInfoLen int(10) const options(*omit);
+  errCode likeds(apiErr_t) options(*omit);
+end-pr;
+
+dcl-pr qleGetExp pointer(*proc) extproc('QleGetExp');
+  actMark int(10) const;
+  expNo int(10) const;
+  expNameLen int(10) const;
+  expName char(256) const options(*varsize);
+  expPtr pointer(*proc);
+  expType int(10);
   errCode likeds(apiErr_t);
 end-pr;
 
@@ -162,7 +225,8 @@ dcl-proc ensureTables;
        + 'TIMESLEFT INT NOT NULL, USED INT NOT NULL, '
        + 'THRID CHAR(7) NOT NULL, THRMSGF CHAR(10) NOT NULL, '
        + 'THRLIB CHAR(10) NOT NULL, THRDTA VARCHAR(512) NOT NULL, '
-       + 'RTNCNT INT NOT NULL)');
+       + 'RTNCNT INT NOT NULL, ANSOBJ CHAR(10) NOT NULL, '
+       + 'ANSLIB CHAR(10) NOT NULL, ANSPROC VARCHAR(256) NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_SARG (STUBID INT NOT NULL, '
        + 'PARMNO SMALLINT NOT NULL, MATCHER CHAR(10) NOT NULL, '
        + 'VAL VARCHAR(1024) NOT NULL, FIELD VARCHAR(40) NOT NULL)');
@@ -171,6 +235,10 @@ dcl-proc ensureTables;
   runDdl('CREATE TABLE QTEMP.IMOQ_SSET (STUBID INT NOT NULL, '
        + 'PARMNO SMALLINT NOT NULL, VAL VARCHAR(1024) NOT NULL, '
        + 'FIELD VARCHAR(40) NOT NULL)');
+  runDdl('CREATE TABLE QTEMP.IMOQ_SCPY (STUBID INT NOT NULL, '
+       + 'SEQ INT NOT NULL, FROMPARM SMALLINT NOT NULL, '
+       + 'FROMFLD VARCHAR(40) NOT NULL, TOPARM SMALLINT NOT NULL, '
+       + 'TOFLD VARCHAR(40) NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_CALL (CALLID INT NOT NULL, '
        + 'OBJ CHAR(10) NOT NULL, PROC VARCHAR(4096) NOT NULL, '
        + 'PARMCNT INT NOT NULL, STUBID INT NOT NULL, '
@@ -194,6 +262,7 @@ dcl-proc dropTables;
   runDdl('DROP TABLE QTEMP.IMOQ_SARG');
   runDdl('DROP TABLE QTEMP.IMOQ_SRTN');
   runDdl('DROP TABLE QTEMP.IMOQ_SSET');
+  runDdl('DROP TABLE QTEMP.IMOQ_SCPY');
   runDdl('DROP TABLE QTEMP.IMOQ_CALL');
   runDdl('DROP TABLE QTEMP.IMOQ_CARG');
   runDdl('DROP TABLE QTEMP.IMOQ_FLD');
@@ -201,6 +270,7 @@ dcl-proc dropTables;
   runDdl('DROP ALIAS QTEMP.IMOQ_BNDR');
   gTablesOk = *off;
   gOrderPos = 0;
+  gNPtrAns = 0;
 end-proc;
 
 // ------------------------------------------------------------------
@@ -216,7 +286,169 @@ dcl-proc deleteStubs;
     (select stubid from qtemp.imoq_stub where obj = :obj or :obj = '*ALL');
   exec sql delete from qtemp.imoq_sset where stubid in
     (select stubid from qtemp.imoq_stub where obj = :obj or :obj = '*ALL');
+  exec sql delete from qtemp.imoq_scpy where stubid in
+    (select stubid from qtemp.imoq_stub where obj = :obj or :obj = '*ALL');
   exec sql delete from qtemp.imoq_stub where obj = :obj or :obj = '*ALL';
+  dropPtrAnswers();
+end-proc;
+
+// ------------------------------------------------------------------
+// Answer procedures passed as pointers (imoq_answers)
+// ------------------------------------------------------------------
+
+// Remember stub id's pointer; *null forgets it. *off if the list is
+// full of stubs that still exist.
+dcl-proc setPtrAnswer;
+  dcl-pi *n ind;
+    id int(10) const;
+    ptr pointer(*proc) const;
+  end-pi;
+  dcl-s i int(10);
+  for i = 1 to gNPtrAns;
+    if gPtrAns(i).id = id;
+      if ptr = *null;
+        gPtrAns(i) = gPtrAns(gNPtrAns);
+        gNPtrAns -= 1;
+      else;
+        gPtrAns(i).ptr = ptr;
+      endif;
+      return *on;
+    endif;
+  endfor;
+  if ptr = *null;
+    return *on;
+  endif;
+  if gNPtrAns >= %elem(gPtrAns);
+    dropPtrAnswers();
+    if gNPtrAns >= %elem(gPtrAns);
+      return *off;
+    endif;
+  endif;
+  gNPtrAns += 1;
+  gPtrAns(gNPtrAns).id = id;
+  gPtrAns(gNPtrAns).ptr = ptr;
+  return *on;
+end-proc;
+
+dcl-proc getPtrAnswer;
+  dcl-pi *n pointer(*proc);
+    id int(10) const;
+  end-pi;
+  dcl-s i int(10);
+  for i = 1 to gNPtrAns;
+    if gPtrAns(i).id = id;
+      return gPtrAns(i).ptr;
+    endif;
+  endfor;
+  return *null;
+end-proc;
+
+// Forget the pointers of stubs that no longer exist
+dcl-proc dropPtrAnswers;
+  dcl-s i int(10);
+  dcl-s k int(10);
+  dcl-s n int(10);
+  dcl-s id int(10);
+  for i = 1 to gNPtrAns;
+    id = gPtrAns(i).id;
+    exec sql select count(*) into :n from qtemp.imoq_stub
+              where stubid = :id;
+    if n > 0;
+      k += 1;
+      gPtrAns(k) = gPtrAns(i);
+    endif;
+  endfor;
+  gNPtrAns = k;
+end-proc;
+
+// ------------------------------------------------------------------
+// ANSWER(obj proc): check that program obj exists (proc *PGM), or
+// find export proc of service program obj and return it in ptr
+// ------------------------------------------------------------------
+dcl-proc resolveAnswer;
+  dcl-pi *n ind;
+    obj char(10) const;
+    lib char(10) const;
+    proc varchar(256) const;
+    ptr pointer(*proc);
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-s rcv char(90);
+  dcl-ds ec likeds(apiErr_t);
+  dcl-s objType char(10);
+  dcl-s realLib char(10);
+  dcl-s libPtr pointer(*proc);
+  dcl-s srv pointer(*proc);
+  dcl-s name30 char(30);
+  dcl-s mark int(10);
+  dcl-s expType int(10);
+  dcl-s name varchar(256);
+  dcl-s what varchar(300);
+
+  ptr = *null;
+  if proc = '*PGM';
+    objType = '*PGM';
+    what = 'ANSWER program ';
+  else;
+    objType = '*SRVPGM';
+    what = 'ANSWER service program ';
+  endif;
+  what += %trim(lib) + '/' + %trim(obj);
+  ec.bytesProv = %size(ec);
+  ec.bytesAvail = 0;
+  qusrobjd(rcv : %size(rcv) : 'OBJD0100' : obj + lib : objType : ec);
+  if ec.bytesAvail > 0;
+    setErr(err : 'IMQ0014' : what + ' was not found (' + ec.msgId + ')');
+    return *off;
+  endif;
+  if proc = '*PGM';
+    return *on;
+  endif;
+  // the library the object was found in (the return library)
+  realLib = %subst(rcv : 39 : 10);
+
+  // Search the library list for *LIBL (where QUSROBJD found it) and
+  // QTEMP, which has no library object to resolve
+  monitor;
+    name30 = obj;
+    if lib = '*LIBL' or realLib = 'QTEMP';
+      rslvsp2(srv : x'0203' + name30 + x'0000');
+    else;
+      name30 = realLib;
+      rslvsp2(libPtr : x'0401' + name30 + x'0000');
+      name30 = obj;
+      rslvsp4(srv : x'0203' + name30 + x'0000' : libPtr);
+    endif;
+    qleActBndPgm(srv : mark : *omit : *omit : ec);
+  on-error;
+    setErr(err : 'IMQ0014' : what + ' could not be activated ('
+         + psds.excType + psds.excNum + ')');
+    return *off;
+  endmon;
+  if ec.bytesAvail > 0;
+    setErr(err : 'IMQ0014' : what + ' could not be activated ('
+         + ec.msgId + ')');
+    return *off;
+  endif;
+
+  // RPG exports are upper case unless EXTPROC names them otherwise
+  name = proc;
+  ec.bytesAvail = 0;
+  qleGetExp(mark : 0 : %len(name) : name : ptr : expType : ec);
+  if (ec.bytesAvail > 0 or expType <> 1 or ptr = *null)
+     and name <> %xlate(LOWER : UPPER : name);
+    name = %xlate(LOWER : UPPER : name);
+    ec.bytesAvail = 0;
+    ptr = *null;
+    qleGetExp(mark : 0 : %len(name) : name : ptr : expType : ec);
+  endif;
+  if ec.bytesAvail > 0 or expType <> 1 or ptr = *null;
+    ptr = *null;
+    setErr(err : 'IMQ0014' : what + ' does not export a procedure '
+         + 'named ' + proc);
+    return *off;
+  endif;
+  return *on;
 end-proc;
 
 dcl-proc deleteCalls;
@@ -1513,7 +1745,9 @@ dcl-proc imoq_cl_when export;
     args char(1) options(*varsize);
     rtns char(1) options(*varsize);
     sets char(1) options(*varsize);
+    copies char(1) options(*varsize);
     thr char(1) options(*varsize);
+    answer char(1) options(*varsize);
     times int(10) const;
     err likeds(imoq_err_t);
   end-pi;
@@ -1561,6 +1795,26 @@ dcl-proc imoq_cl_when export;
     endif;
   endfor;
 
+  // COPYARG entries: from (int2), to (int2), from field (40),
+  // to field (40)
+  p = %addr(copies);
+  stub.nCopy = lstCount(p);
+  if stub.nCopy > IMOQ_MAXP;
+    setErr(err : 'IMQ0014' : 'At most 64 COPYARG entries are allowed');
+    return;
+  endif;
+  for i = 1 to stub.nCopy;
+    e = lstEntry(p : i);
+    stub.cpFrom(i) = int2At(e + 2);
+    stub.cpTo(i) = int2At(e + 4);
+    if not imoq_parseField(charAt(e + 6 : 40) : stub.cpFromFld(i) : msg)
+       or not imoq_parseField(charAt(e + 46 : 40) : stub.cpToFld(i)
+                              : msg);
+      setErr(err : 'IMQ0014' : 'COPYARG entry ' + %char(i) + ': ' + msg);
+      return;
+    endif;
+  endfor;
+
   // THROW
   p = %addr(thr);
   if lstCount(p) > 0;
@@ -1568,6 +1822,14 @@ dcl-proc imoq_cl_when export;
     stub.thrMsgf = charAt(p + 9 : 10);
     stub.thrLib = charAt(p + 19 : 10);
     stub.thrDta = varyText(p + 29 : 256);
+  endif;
+
+  // ANSWER: qualified object (10 + 10), procedure (VARY 256)
+  p = %addr(answer);
+  if lstCount(p) > 0;
+    stub.ansObj = charAt(p + 2 : 10);
+    stub.ansLib = charAt(p + 12 : 10);
+    stub.ansProc = varyText(p + 22 : 256);
   endif;
 
   imoq_stubSave(stub : err);
@@ -1603,6 +1865,14 @@ dcl-proc imoq_stubSave export;
   dcl-s what varchar(60);
   dcl-ds fd likeds(imoq_def_t);
   dcl-s off int(10);
+  dcl-s j int(10);
+  dcl-s toNo int(5);
+  dcl-s toFld varchar(40);
+  dcl-s fromFld varchar(40);
+  dcl-s ansObj char(10);
+  dcl-s ansLib char(10);
+  dcl-s ansProc varchar(256);
+  dcl-s ansPtr pointer(*proc);
 
   clearErr(err);
   ensureTables();
@@ -1681,6 +1951,92 @@ dcl-proc imoq_stubSave export;
     endif;
   endfor;
 
+  // COPYARG: the source must be a declared parameter (or subfield),
+  // the target something SETPARM or RETURN could set
+  if stub.nCopy > IMOQ_MAXP;
+    setErr(err : 'IMQ0014' : 'At most 64 COPYARG entries are allowed');
+    return *off;
+  endif;
+  for i = 1 to stub.nCopy;
+    what = 'COPYARG entry ' + %char(i);
+    if stub.cpFrom(i) < 1 or stub.cpFrom(i) > tgt.nDefs;
+      setErr(err : 'IMQ0014' : what + ': parameter '
+           + %char(stub.cpFrom(i)) + ' of ' + tgt.lbl + ' is not '
+           + 'declared, so its value can''t be read');
+      return *off;
+    endif;
+    if stub.cpFromFld(i) <> ''
+       and not findField(tgt.obj : tgt.proc : stub.cpFrom(i)
+                         : stub.cpFromFld(i) : fd : off : err);
+      setErr(err : 'IMQ0014' : what + ': ' + %trimr(err.text));
+      return *off;
+    endif;
+    if stub.cpTo(i) = 0;
+      if not tgt.hasRtn;
+        setErr(err : 'IMQ0014' : what + ': ' + tgt.lbl + ' has no '
+             + 'declared return value. Declare RTNTYPE with IMOQPROC');
+        return *off;
+      endif;
+      if stub.cpToFld(i) = '' and stub.nRtn > 0;
+        setErr(err : 'IMQ0014' : what + ': the return value comes from '
+             + 'RETURN already. Use one or the other');
+        return *off;
+      endif;
+    else;
+      if stub.cpTo(i) < 1 or stub.cpTo(i) > tgt.nDefs;
+        setErr(err : 'IMQ0014' : what + ': parameter '
+             + %char(stub.cpTo(i)) + ' of ' + tgt.lbl + ' is not declared');
+        return *off;
+      endif;
+      if tgt.defs(stub.cpTo(i)).passing = '*VALUE';
+        setErr(err : 'IMQ0014' : what + ': parameter '
+             + %char(stub.cpTo(i)) + ' is passed by value and cannot be '
+             + 'set');
+        return *off;
+      endif;
+    endif;
+    if stub.cpToFld(i) <> ''
+       and not findField(tgt.obj : tgt.proc : stub.cpTo(i)
+                         : stub.cpToFld(i) : fd : off : err);
+      setErr(err : 'IMQ0014' : what + ': ' + %trimr(err.text));
+      return *off;
+    endif;
+    for j = 1 to stub.nSet;
+      if stub.setNo(j) = stub.cpTo(i) and stub.setFld(j) = stub.cpToFld(i);
+        setErr(err : 'IMQ0014' : what + ': SETPARM entry ' + %char(j)
+             + ' sets ' + refText(stub.cpTo(i) : stub.cpToFld(i))
+             + ' already. Use one or the other');
+        return *off;
+      endif;
+    endfor;
+  endfor;
+
+  // ANSWER: a procedure pointer (imoq_answers), or a program or a
+  // service program export that must exist now
+  stub.ansObj = %xlate(LOWER : UPPER : stub.ansObj);
+  stub.ansLib = %xlate(LOWER : UPPER : stub.ansLib);
+  stub.ansProc = %trim(stub.ansProc);
+  if stub.ansPtr <> *null or stub.ansObj = PTRANSWER;
+    stub.ansObj = PTRANSWER;
+    stub.ansLib = ' ';
+    stub.ansProc = '';
+  elseif stub.ansObj = ' ' or stub.ansObj = '*NONE';
+    stub.ansObj = ' ';
+    stub.ansLib = ' ';
+    stub.ansProc = '';
+  else;
+    if stub.ansLib = ' ';
+      stub.ansLib = '*LIBL';
+    endif;
+    if stub.ansProc = '' or %xlate(LOWER : UPPER : stub.ansProc) = '*PGM';
+      stub.ansProc = '*PGM';
+    endif;
+    if not resolveAnswer(stub.ansObj : stub.ansLib : stub.ansProc : ansPtr
+                         : err);
+      return *off;
+    endif;
+  endif;
+
   // THROW: fill in the defaults (saving again leaves them unchanged)
   stub.thrId = %xlate(LOWER : UPPER : stub.thrId);
   if stub.thrId = '*NONE' or stub.thrId = ' ';
@@ -1718,6 +2074,9 @@ dcl-proc imoq_stubSave export;
   thrLib = stub.thrLib;
   thrDta = stub.thrDta;
   nRtn = stub.nRtn;
+  ansObj = stub.ansObj;
+  ansLib = stub.ansLib;
+  ansProc = stub.ansProc;
   if stub.id = 0;
     exec sql select coalesce(max(stubid), 0) into :id
                from qtemp.imoq_stub;
@@ -1727,7 +2086,7 @@ dcl-proc imoq_stubSave export;
     id += 1;
     exec sql insert into qtemp.imoq_stub
       values(:id, :obj, :proc, :times, 0, :thrId, :thrMsgf, :thrLib,
-             :thrDta, :nRtn);
+             :thrDta, :nRtn, :ansObj, :ansLib, :ansProc);
     if sqlcode < 0;
       setErr(err : 'IMQ0015' : sqlFailText('Save stub'));
       return *off;
@@ -1750,7 +2109,8 @@ dcl-proc imoq_stubSave export;
                                      when :times > used then :times - used
                                      else 0 end,
                     thrid = :thrId, thrmsgf = :thrMsgf, thrlib = :thrLib,
-                    thrdta = :thrDta, rtncnt = :nRtn
+                    thrdta = :thrDta, rtncnt = :nRtn, ansobj = :ansObj,
+                    anslib = :ansLib, ansproc = :ansProc
               where stubid = :id;
     if sqlcode < 0;
       setErr(err : 'IMQ0015' : sqlFailText('Save stub'));
@@ -1759,6 +2119,16 @@ dcl-proc imoq_stubSave export;
     exec sql delete from qtemp.imoq_sarg where stubid = :id;
     exec sql delete from qtemp.imoq_srtn where stubid = :id;
     exec sql delete from qtemp.imoq_sset where stubid = :id;
+    exec sql delete from qtemp.imoq_scpy where stubid = :id;
+  endif;
+  if stub.ansObj = PTRANSWER;
+    if not setPtrAnswer(id : stub.ansPtr);
+      setErr(err : 'IMQ0014' : 'At most ' + %char(%elem(gPtrAns))
+           + ' stubs can have an answer procedure');
+      return *off;
+    endif;
+  else;
+    setPtrAnswer(id : *null);
   endif;
 
   for i = 1 to stub.nM;
@@ -1779,6 +2149,15 @@ dcl-proc imoq_stubSave export;
     v = stub.setVal(i);
     fld = stub.setFld(i);
     exec sql insert into qtemp.imoq_sset values(:id, :parmNo, :v, :fld);
+  endfor;
+  for i = 1 to stub.nCopy;
+    seq = i;
+    parmNo = stub.cpFrom(i);
+    fromFld = stub.cpFromFld(i);
+    toNo = stub.cpTo(i);
+    toFld = stub.cpToFld(i);
+    exec sql insert into qtemp.imoq_scpy
+      values(:id, :seq, :parmNo, :fromFld, :toNo, :toFld);
   endfor;
   return *on;
 end-proc;
@@ -1804,14 +2183,19 @@ dcl-proc imoq_stubLoad export;
   dcl-s mt char(10);
   dcl-s v varchar(1024);
   dcl-s fld varchar(40);
+  dcl-s toNo int(5);
+  dcl-s toFld varchar(40);
+  dcl-s ansObj char(10);
+  dcl-s ansLib char(10);
+  dcl-s ansProc varchar(256);
 
   clearErr(err);
   ensureTables();
   clear stub;
   exec sql select obj, proc, timesleft, used, thrid, thrmsgf, thrlib,
-                  thrdta
+                  thrdta, ansobj, anslib, ansproc
              into :obj, :proc, :left, :used, :thrId, :thrMsgf, :thrLib,
-                  :thrDta
+                  :thrDta, :ansObj, :ansLib, :ansProc
              from qtemp.imoq_stub where stubid = :id;
   if sqlcode <> 0;
     setErr(err : 'IMQ0014' : 'Stub ' + %char(id) + ' no longer exists. '
@@ -1830,6 +2214,12 @@ dcl-proc imoq_stubLoad export;
   stub.thrMsgf = thrMsgf;
   stub.thrLib = thrLib;
   stub.thrDta = thrDta;
+  stub.ansObj = ansObj;
+  stub.ansLib = ansLib;
+  stub.ansProc = ansProc;
+  if ansObj = PTRANSWER;
+    stub.ansPtr = getPtrAnswer(id);
+  endif;
 
   exec sql declare cLdArg cursor for
     select parmno, matcher, val, field from qtemp.imoq_sarg
@@ -1876,6 +2266,23 @@ dcl-proc imoq_stubLoad export;
     stub.setFld(stub.nSet) = fld;
   enddo;
   exec sql close cLdSet;
+
+  exec sql declare cLdCpy cursor for
+    select fromparm, fromfld, toparm, tofld from qtemp.imoq_scpy
+     where stubid = :id order by seq;
+  exec sql open cLdCpy;
+  dow sqlcode = 0 and stub.nCopy < IMOQ_MAXP;
+    exec sql fetch next from cLdCpy into :parmNo, :fld, :toNo, :toFld;
+    if sqlcode <> 0;
+      leave;
+    endif;
+    stub.nCopy += 1;
+    stub.cpFrom(stub.nCopy) = parmNo;
+    stub.cpFromFld(stub.nCopy) = fld;
+    stub.cpTo(stub.nCopy) = toNo;
+    stub.cpToFld(stub.nCopy) = toFld;
+  enddo;
+  exec sql close cLdCpy;
   return *on;
 end-proc;
 
@@ -2241,8 +2648,6 @@ dcl-proc imoq_getArg export;
   dcl-s declared char(1);
   dcl-s id int(10);
   dcl-s offs int(10);
-  dcl-s state char(1);
-  dcl-s p5 int(5);
   dcl-ds fd likeds(imoq_def_t);
   dcl-s off int(10);
 
@@ -2283,20 +2688,164 @@ dcl-proc imoq_getArg export;
     return *off;
   endif;
 
+  val = callArgText(id : parmNo : field);
+  return *on;
+end-proc;
+
+// A recorded argument (or subfield) as text: *OMIT or *NOTPASSED
+// when it has no value
+dcl-proc callArgText;
+  dcl-pi *n varchar(1024);
+    callId int(10) const;
+    parmNo int(10) const;
+    field varchar(40) const;
+  end-pi;
+  dcl-s state char(1);
+  dcl-s val varchar(1024);
+  dcl-s p5 int(5);
+
   if field <> '';
-    loadCallField(id : parmNo : field : state : val);
+    loadCallField(callId : parmNo : field : state : val);
   else;
     p5 = parmNo;
     exec sql select state, val into :state, :val from qtemp.imoq_carg
-              where callid = :id and parmno = :p5 and field = '';
+              where callid = :callId and parmno = :p5 and field = '';
     if sqlcode <> 0;
       state = 'N';
     endif;
   endif;
   if state = 'N';
-    val = '*NOTPASSED';
+    return '*NOTPASSED';
   elseif state = 'O';
-    val = '*OMIT';
+    return '*OMIT';
+  endif;
+  return val;
+end-proc;
+
+// ------------------------------------------------------------------
+// imoq_answerGet / imoq_answerPut - the call an answer procedure is
+// answering (see imoq_invoke)
+// ------------------------------------------------------------------
+dcl-proc answerActive;
+  dcl-pi *n ind;
+    err likeds(imoq_err_t);
+  end-pi;
+  if not gAns.active;
+    setErr(err : 'IMQ0014' : 'No call is being answered. The '
+         + 'imoq_answer... procedures work only inside an answer '
+         + 'procedure (ANSWER, imoq_answers)');
+    return *off;
+  endif;
+  return *on;
+end-proc;
+
+dcl-proc imoq_answerGet export;
+  dcl-pi *n ind;
+    parmNo int(10) const;
+    field varchar(40) const;
+    val varchar(1024);
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-ds fd likeds(imoq_def_t);
+  dcl-s off int(10);
+
+  clearErr(err);
+  val = '';
+  if not answerActive(err);
+    return *off;
+  endif;
+  if parmNo < 1 or parmNo > IMOQ_MAXP;
+    setErr(err : 'IMQ0014' : 'Parameter number must be 1 to 64');
+    return *off;
+  endif;
+  if field <> ''
+     and not findField(gAns.obj : gAns.proc : parmNo : field : fd : off
+                       : err);
+    return *off;
+  endif;
+  val = callArgText(gAns.callId : parmNo : field);
+  return *on;
+end-proc;
+
+dcl-proc imoq_answerPut export;
+  dcl-pi *n ind;
+    parmNo int(10) const;
+    field varchar(40) const;
+    val varchar(1024) const;
+    err likeds(imoq_err_t);
+  end-pi;
+  dcl-ds defs likeds(imoq_def_t) dim(64);
+  dcl-ds rtnDef likeds(imoq_def_t);
+  dcl-ds fd likeds(imoq_def_t);
+  dcl-ds flds likeds(fields_t);
+  dcl-s nDefs int(10);
+  dcl-s hasRtn ind;
+  dcl-s off int(10);
+  dcl-s p pointer;
+  dcl-s pp pointer;
+  dcl-s ptrs pointer dim(64) based(pp);
+  dcl-s lbl varchar(4200);
+  dcl-s what varchar(80);
+  dcl-s msg varchar(256);
+
+  clearErr(err);
+  if not answerActive(err);
+    return *off;
+  endif;
+  lbl = label(gAns.obj : gAns.proc);
+  loadSig(gAns.obj : gAns.proc : defs : nDefs : rtnDef : hasRtn);
+
+  if parmNo = 0;
+    what = 'The return value';
+    if not hasRtn or gAns.rtnPtr = *null;
+      setErr(err : 'IMQ0014' : lbl + ' has no declared return value. '
+           + 'Declare RTNTYPE with IMOQPROC');
+      return *off;
+    endif;
+    p = gAns.rtnPtr;
+    fd = rtnDef;
+  else;
+    what = 'Parameter ' + %char(parmNo);
+    if parmNo < 1 or parmNo > nDefs;
+      setErr(err : 'IMQ0014' : 'Parameter ' + %char(parmNo) + ' of '
+           + lbl + ' is not declared');
+      return *off;
+    endif;
+    if defs(parmNo).passing = '*VALUE';
+      setErr(err : 'IMQ0014' : 'Parameter ' + %char(parmNo)
+           + ' is passed by value and cannot be set');
+      return *off;
+    endif;
+    pp = gAns.parmPtrs;
+    if parmNo > gAns.nPassed or pp = *null or ptrs(parmNo) = *null;
+      setErr(err : 'IMQ0014' : 'Parameter ' + %char(parmNo) + ' of '
+           + lbl + ' was not passed (or was *OMIT), so it can''t be set');
+      return *off;
+    endif;
+    p = ptrs(parmNo);
+    fd = defs(parmNo);
+  endif;
+
+  if field <> '';
+    if not findField(gAns.obj : gAns.proc : parmNo : field : fd : off
+                     : err);
+      return *off;
+    endif;
+    // the rest of a return value nothing has set yet starts out blank,
+    // with zero numbers
+    if parmNo = 0 and not gAns.rtnSet;
+      loadFields(gAns.obj : gAns.proc : flds);
+      clearReturn(gAns.rtnPtr : rtnDef : flds);
+    endif;
+    p += off;
+    what += ', field ' + field;
+  endif;
+  if not imoq_encode(p : fd : val : msg);
+    setErr(err : 'IMQ0014' : what + ': ' + msg);
+    return *off;
+  endif;
+  if parmNo = 0;
+    gAns.rtnSet = *on;
   endif;
   return *on;
 end-proc;
@@ -2617,8 +3166,18 @@ dcl-proc imoq_invoke export;
   dcl-ds fd likeds(imoq_def_t);
   dcl-s off int(10);
   dcl-s nRf int(10);
-  dcl-s rfFld varchar(40) dim(64);
-  dcl-s rfVal varchar(1024) dim(64);
+  dcl-s rfFld varchar(40) dim(128);
+  dcl-s rfVal varchar(1024) dim(128);
+  dcl-s fromNo int(5);
+  dcl-s fromFld varchar(40);
+  dcl-s toFld varchar(40);
+  dcl-s cpRtn varchar(1024);
+  dcl-s hasCpRtn ind;
+  dcl-s ansObj char(10);
+  dcl-s ansLib char(10);
+  dcl-s ansProc varchar(256);
+  dcl-s failure varchar(512);
+  dcl-ds prevAns likeds(ans_t);
 
   clear thr;
   monitor;
@@ -2756,8 +3315,10 @@ dcl-proc imoq_invoke export;
     exec sql update qtemp.imoq_call set stubid = :sid
               where callid = :callId;
 
-    exec sql select thrid, thrmsgf, thrlib, thrdta, rtncnt
-               into :thrId, :thrMsgf, :thrLib, :thrDta, :rtnCnt
+    exec sql select thrid, thrmsgf, thrlib, thrdta, rtncnt, ansobj,
+                    anslib, ansproc
+               into :thrId, :thrMsgf, :thrLib, :thrDta, :rtnCnt, :ansObj,
+                    :ansLib, :ansProc
                from qtemp.imoq_stub where stubid = :sid;
     if thrId <> ' ';
       thr.msgId = thrId;
@@ -2793,7 +3354,64 @@ dcl-proc imoq_invoke export;
     enddo;
     exec sql close cSet;
 
-    // RETURN (consecutive values, the last one repeats)
+    // COPYARG: arguments as they arrived, into outputs. An argument
+    // that wasn't passed copies nothing.
+    exec sql declare cCpy cursor for
+      select fromparm, fromfld, toparm, tofld from qtemp.imoq_scpy
+       where stubid = :sid order by seq;
+    exec sql open cCpy;
+    dow sqlcode = 0 and failure = '';
+      exec sql fetch next from cCpy into :fromNo, :fromFld, :parmNo, :toFld;
+      if sqlcode <> 0;
+        leave;
+      endif;
+      if fromNo < 1 or fromNo > nCap or st(fromNo) <> 'P';
+        iter;
+      endif;
+      if fromFld = '';
+        v = vals(fromNo);
+      else;
+        j = 0;
+        for i = 1 to nX;
+          if xParm(i) = fromNo and xKey(i) = fromFld;
+            j = i;
+            leave;
+          endif;
+        endfor;
+        if j = 0;
+          iter;
+        endif;
+        v = xVal(j);
+      endif;
+      if parmNo = 0;
+        if toFld = '';
+          cpRtn = v;
+          hasCpRtn = *on;
+        elseif nRf < %elem(rfFld);
+          nRf += 1;
+          rfFld(nRf) = toFld;
+          rfVal(nRf) = v;
+        endif;
+      elseif parmNo <= nDefs and parmNo <= nPassed and st(parmNo) = 'P';
+        if toFld = '';
+          if not imoq_encode(ptrs(parmNo) : defs(parmNo) : v : m256);
+            failure = 'COPYARG ' + refText(fromNo : fromFld) + ' to '
+                    + refText(parmNo : toFld) + ': ' + m256;
+          endif;
+        elseif fieldAt(flds : parmNo : toFld : fd : off);
+          if not imoq_encode(ptrs(parmNo) + off : fd : v : m256);
+            failure = 'COPYARG ' + refText(fromNo : fromFld) + ' to '
+                    + refText(parmNo : toFld) + ': ' + m256;
+          endif;
+        endif;
+      endif;
+    enddo;
+    exec sql close cCpy;
+    if failure <> '';
+      return answerFailed(obj : proc : failure : thr);
+    endif;
+
+    // RETURN (consecutive values, the last one repeats) or COPYARG
     if rtnCnt > 0 and hasRtn and rtnPtr <> *null;
       seq = stubUsed(chosen) + 1;
       if seq > rtnCnt;
@@ -2804,24 +3422,119 @@ dcl-proc imoq_invoke export;
       if sqlcode = 0;
         imoq_encode(rtnPtr : rtnDef : v : m256);
       endif;
+    elseif hasCpRtn and hasRtn and rtnPtr <> *null;
+      if not imoq_encode(rtnPtr : rtnDef : cpRtn : m256);
+        return answerFailed(obj : proc : 'COPYARG to the return value: '
+                            + m256 : thr);
+      endif;
     endif;
 
     // Fields of a data structure return value. Without RETURN, the
     // rest of the value starts out blank, with zero numbers.
     if nRf > 0 and hasRtn and rtnPtr <> *null;
-      if rtnCnt = 0;
+      if rtnCnt = 0 and not hasCpRtn;
         clearReturn(rtnPtr : rtnDef : flds);
       endif;
       for i = 1 to nRf;
         if fieldAt(flds : 0 : rfFld(i) : fd : off);
-          imoq_encode(rtnPtr + off : fd : rfVal(i) : m256);
+          if not imoq_encode(rtnPtr + off : fd : rfVal(i) : m256);
+            return answerFailed(obj : proc : 'COPYARG to 0.' + rfFld(i)
+                                + ': ' + m256 : thr);
+          endif;
         endif;
       endfor;
+    endif;
+
+    // ANSWER / imoq_answers: the test's own procedure has the last
+    // word. It reads and sets this call through imoq_answer...
+    if ansObj <> ' ';
+      prevAns = gAns;
+      clear gAns;
+      gAns.active = *on;
+      gAns.obj = obj;
+      gAns.proc = proc;
+      gAns.callId = callId;
+      gAns.nPassed = nPassed;
+      gAns.parmPtrs = parmPtrs;
+      gAns.rtnPtr = rtnPtr;
+      gAns.rtnSet = rtnCnt > 0 or hasCpRtn or nRf > 0;
+      failure = callAnswer(sid : ansObj : ansLib : ansProc);
+      gAns = prevAns;
+      if failure <> '';
+        return answerFailed(obj : proc : failure : thr);
+      endif;
     endif;
   on-error;
     return 0;
   endmon;
   return 0;
+end-proc;
+
+// Stop the call with IMQ0102: the answer couldn't be given
+dcl-proc answerFailed;
+  dcl-pi *n int(10);
+    obj char(10) const;
+    proc varchar(4096) const;
+    text varchar(512) const;
+    thr likeds(imoq_throw_t);
+  end-pi;
+  thr.msgId = 'IMQ0102';
+  thr.msgf = 'IMOQMSGF';
+  thr.msgfLib = psds.lib;
+  thr.msgDta = 'Answer to ' + label(obj : proc) + ' failed. ' + text;
+  gLastErr = thr.msgDta;
+  return 1;
+end-proc;
+
+// Call the answer procedure or program of stub sid. Returns why it
+// failed, or '' if it ended normally.
+dcl-proc callAnswer;
+  dcl-pi *n varchar(512);
+    sid int(10) const;
+    ansObj char(10) const;
+    ansLib char(10) const;
+    ansProc varchar(256) const;
+  end-pi;
+  dcl-ds err likeds(imoq_err_t);
+  dcl-s p pointer(*proc);
+  dcl-s what varchar(300);
+
+  if ansObj = PTRANSWER;
+    what = 'The answer procedure';
+    p = getPtrAnswer(sid);
+    if p = *null;
+      return '';
+    endif;
+  elseif ansProc = '*PGM';
+    what = 'Answer program ' + %trim(ansLib) + '/' + %trim(ansObj);
+    gAnsPgm = %trim(ansObj);
+    if ansLib <> '*LIBL';
+      gAnsPgm = %trim(ansLib) + '/' + %trim(ansObj);
+    endif;
+  else;
+    what = 'Answer procedure ' + ansProc + ' of ' + %trim(ansLib) + '/'
+         + %trim(ansObj);
+    if not resolveAnswer(ansObj : ansLib : ansProc : p : err);
+      return %trimr(err.text);
+    endif;
+  endif;
+
+  // imoq_answer... failures leave their reason in gLastErr
+  gLastErr = '';
+  monitor;
+    if p = *null;
+      answerPgm();
+    else;
+      gAnsCall = p;
+      answerProc();
+    endif;
+  on-error;
+    if gLastErr <> '';
+      return what + ' ended with an error: ' + gLastErr;
+    endif;
+    return what + ' ended with an error: ' + psds.excType + psds.excNum;
+  endmon;
+  return '';
 end-proc;
 
 dcl-proc callMatchesText;

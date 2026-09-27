@@ -1,0 +1,51 @@
+/* ---------------------------------------------------------------- */
+/* EXANSWER - Answers built from the arguments                      */
+/*                                                                  */
+/* Driver for test program EXANSWER_T.                              */
+/*   CRTBNDCL PGM(IMOQ/EXANSWER) SRCFILE(IMOQ/QCLLESRC)             */
+/*   CALL IMOQ/EXANSWER PARM('IMOQ')                                */
+/* ---------------------------------------------------------------- */
+             PGM        PARM(&LIB)
+             DCL        VAR(&LIB) TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSG) TYPE(*CHAR) LEN(512)
+
+/* iMoq and the example source are in &LIB                          */
+             CHGCURLIB  CURLIB(&LIB)
+
+/* 1. Create the mock                                               */
+             IMOQSRVPGM OBJ(EXCONV)
+             IMOQPROC   OBJ(EXCONV) PROC(EX_CONVERT) +
+                          RTNTYPE(*PACKED 9 2) +
+                          PARMS((*PACKED 9 2 *CONST) (*CHAR 3 *CONST))
+             IMOQPROC   OBJ(EXCONV) PROC(EX_LOOKUP) +
+                          PARMS((*CHAR 5 *CONST) (*CHAR 35))
+             IMOQFIELD  OBJ(EXCONV) PROC(EX_LOOKUP) PARM(2) +
+                          FIELDS((ID 1 *CHAR 5) (NAME *NEXT *CHAR 30))
+             IMOQBUILD  OBJ(EXCONV)
+
+/* 2. The answer procedures the commands name with ANSWER. They are */
+/*    exports of a service program, as in an RPGUnit test service   */
+/*    program.                                                      */
+             CRTRPGMOD  MODULE(QTEMP/EXANSSRV) SRCFILE(&LIB/QRPGLESRC)
+             CRTSRVPGM  SRVPGM(QTEMP/EXANSSRV) MODULE(QTEMP/EXANSSRV) +
+                          EXPORT(*ALL) BNDSRVPGM((*LIBL/IMOQENG))
+
+/* 3. Compile the test program                                      */
+             CRTRPGMOD  MODULE(QTEMP/EXANSWER_T) SRCFILE(&LIB/QRPGLESRC)
+             CRTPGM     PGM(QTEMP/EXANSWER_T) MODULE(QTEMP/EXANSWER_T) +
+                          BNDSRVPGM((*LIBL/EXCONV) (*LIBL/IMOQENG)) +
+                          ACTGRP(*NEW)
+
+/* 4. Run it. A failed expect() arrives as escape message CPF9898.  */
+             CALL       PGM(QTEMP/EXANSWER_T)
+             MONMSG     MSGID(CPF9898) EXEC(DO)
+             RCVMSG     MSGTYPE(*EXCP) MSG(&MSG)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) MSGDTA('EXANSWER +
+                          failed:' *BCAT &MSG) MSGTYPE(*ESCAPE)
+             ENDDO
+
+/* 5. Remove the mock                                               */
+             IMOQRMV
+             SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('EXANSWER +
+                          passed') MSGTYPE(*COMP)
+             ENDPGM

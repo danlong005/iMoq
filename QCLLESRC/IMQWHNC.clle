@@ -1,14 +1,16 @@
 /* ---------------------------------------------------------------- */
 /* IMQWHNC - iMoq command processing program for IMOQWHEN           */
 /* ---------------------------------------------------------------- */
-             PGM        PARM(&OBJ &PROC &ARGS &RTNS &SETS &THROW +
-                          &TIMES)
+             PGM        PARM(&OBJ &PROC &ARGS &RTNS &SETS &COPYS +
+                          &THROW &ANSWER &TIMES)
              DCL        VAR(&OBJ) TYPE(*CHAR) LEN(10)
              DCL        VAR(&PROC) TYPE(*CHAR) LEN(258)
              DCL        VAR(&ARGS) TYPE(*CHAR) LEN(21000)
              DCL        VAR(&RTNS) TYPE(*CHAR) LEN(9000)
              DCL        VAR(&SETS) TYPE(*CHAR) LEN(20000)
+             DCL        VAR(&COPYS) TYPE(*CHAR) LEN(6000)
              DCL        VAR(&THROW) TYPE(*CHAR) LEN(300)
+             DCL        VAR(&ANSWER) TYPE(*CHAR) LEN(300)
              DCL        VAR(&TIMES) TYPE(*INT) LEN(4)
              DCL        VAR(&ERR) TYPE(*CHAR) LEN(529)
              DCL        VAR(&ERRID) TYPE(*CHAR) LEN(7) STG(*DEFINED) +
@@ -24,8 +26,8 @@
                           EXEC(GOTO CMDLBL(FAIL))
 
              CALLPRC    PRC('IMOQ_CL_WHEN') PARM((&OBJ) (&PROC) +
-                          (&ARGS) (&RTNS) (&SETS) (&THROW) (&TIMES) +
-                          (&ERR))
+                          (&ARGS) (&RTNS) (&SETS) (&COPYS) (&THROW) +
+                          (&ANSWER) (&TIMES) (&ERR))
              IF         COND(&ERRID *NE ' ') THEN(GOTO CMDLBL(MOCKERR))
              RETURN
 

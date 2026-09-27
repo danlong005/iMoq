@@ -62,6 +62,19 @@ dcl-ds imoq_stub_t qualified template;
   thrLib char(10);
   thrDta varchar(512);
   times int(10);
+  // COPYARG: argument cpFrom[.cpFromFld] into parameter cpTo[.cpToFld]
+  // (cpTo 0 is the return value)
+  nCopy int(10);
+  cpFrom int(10) dim(64);
+  cpFromFld varchar(40) dim(64);
+  cpTo int(10) dim(64);
+  cpToFld varchar(40) dim(64);
+  // ANSWER: program ansObj (ansProc *PGM) or export ansProc of
+  // service program ansObj, or procedure ansPtr (imoq_answers)
+  ansObj char(10);
+  ansLib char(10);
+  ansProc varchar(256);
+  ansPtr pointer(*proc);
 end-ds;
 
 // ---- Stub entry point (called by generated stubs) ----------------
@@ -214,6 +227,24 @@ dcl-pr imoq_parseField ind extproc('IMOQ_PARSEFIELD');
   text varchar(64) const;
   field varchar(40);
   msg varchar(256);
+end-pr;
+
+// ---- The call an answer procedure is answering -----------------
+// Its argument as it arrived (*OMIT, *NOTPASSED for missing ones)
+dcl-pr imoq_answerGet ind extproc('IMOQ_ANSWERGET');
+  parmNo int(10) const;
+  field varchar(40) const;
+  val varchar(1024);
+  err likeds(imoq_err_t);
+end-pr;
+
+// Set an output parameter, one of its subfields, the return value
+// (parameter 0) or a subfield of the return value
+dcl-pr imoq_answerPut ind extproc('IMOQ_ANSWERPUT');
+  parmNo int(10) const;
+  field varchar(40) const;
+  val varchar(1024) const;
+  err likeds(imoq_err_t);
 end-pr;
 
 dcl-pr imoq_cl_noMore extproc('IMOQ_CL_NOMORE');

@@ -27,6 +27,7 @@ For the concepts behind the examples, see the
   - [EXVALUE: parameters passed by value](#exvalue-parameters-passed-by-value)
   - [EXTYPES: varchar, zoned, float and pointer parameters](#extypes-varchar-zoned-float-and-pointer-parameters)
   - [EXFIELD: data structures, arrays and data structure returns](#exfield-data-structures-arrays-and-data-structure-returns)
+  - [EXANSWER: answers built from the arguments](#exanswer-answers-built-from-the-arguments)
 - Checking what happened
   - [EXVERIFY: check how often something was called](#exverify-check-how-often-something-was-called)
   - [EXORDER: check the order of calls](#exorder-check-the-order-of-calls)
@@ -545,6 +546,49 @@ What to notice:
   returned data structure; fields you don't set come back blank or zero.
 - **`SETPARM` on an output data structure changes only that subfield.**
 
+### EXANSWER: answers built from the arguments
+
+Test program [`EXANSWER_T`](../examples/QRPGLESRC/EXANSWER_T.rpgle), answer
+procedures [`EXANSSRV`](../examples/QRPGLESRC/EXANSSRV.rpgle), driver
+[`EXANSWER`](../examples/QCLLESRC/EXANSWER.clle)
+
+```rpgle
+// dollars stay dollars: return the amount it was given
+imoq('IMOQWHEN OBJ(EXCONV) PROC(EX_CONVERT) +
+      ARGS((2 *EQ USD)) COPYARG((1 0))');
+// euros: procedure EURANSWER of service program EXANSSRV computes it
+imoq('IMOQWHEN OBJ(EXCONV) PROC(EX_CONVERT) +
+      ARGS((2 *EQ EUR)) ANSWER(EXANSSRV EURANSWER)');
+// the customer number goes into field ID of parameter 2
+imoq('IMOQWHEN OBJ(EXCONV) PROC(EX_LOOKUP) +
+      COPYARG((1 2 '' '' ID)) SETPARM((2 ''ACME CORP'' NAME))');
+
+// the same with the RPG API
+h = imoq_when('EXCONV' : 'EX_CONVERT');
+imoq_with(h : 2 : IMOQ_EQ : 'EUR');
+imoq_answers(h : %paddr(eurAnswer));
+...
+dcl-proc eurAnswer;
+  imoq_answerReturns(imoq_answerArgNum(1) * 1.10);
+end-proc;
+```
+
+What to notice:
+- **`COPYARG((from to))` copies an argument** into an output parameter, or
+  into the return value when `to` is 0. Its third and fourth elements name
+  subfields, so `(1 2 ' ' ID)` fills field `ID` of parameter 2. The value is
+  converted to the target's type, and every call copies its own argument.
+- **An answer procedure takes no parameters.** It reads the call with
+  `imoq_answerArg…` and sets it with `imoq_answerReturns` and
+  `imoq_answerSetParm`. It runs last, after the stub's `RETURN`, `SETPARM`
+  and `COPYARG`.
+- **`ANSWER(srvpgm proc)` names an export**, the way a command string in an
+  RPGUnit test names a procedure of its own test service program.
+  `ANSWER(pgm)` calls a program instead. From RPG, `imoq_answers` takes
+  `%paddr` of any procedure in the test.
+- **If the answer fails,** the code under test gets escape message **IMQ0102**
+  saying why.
+
 ---
 
 ## Checking what happened
@@ -815,7 +859,7 @@ jobs with the RPG API, one test procedure per topic:
 
 | Procedure | Shows |
 |---|---|
-| `stubbing` | `imoq_when`, a series of `imoq_returns`, `imoq_setParm`, `imoq_times(h : 1)` and `IMOQ_ALWAYS`, and the newest stub winning |
+| `stubbing` | `imoq_when`, a series of `imoq_returns`, `imoq_setParm`, `imoq_times(h : 1)` and `IMOQ_ALWAYS`, and the newest stub winning. `imoq_copyArg` and answer procedures (`imoq_answers`) are in [EXANSWER](#exanswer-answers-built-from-the-arguments) |
 | `matchers` | All thirteen matchers: `IMOQ_EQ`, `NE`, `LIKE`, `BLANK` on text; `GT`, `GE`, `LT`, `LE` on numbers (two on one parameter make a range); `IN` and `BETWEEN` with comma-separated values; `ANY`, `OMIT`, `NOTPASSED` on an optional parameter |
 | `typedValues` | Times and timestamps in `imoq_with`, numbers and dates in `imoq_setParm`, timestamp and time return values |
 | `throwing` | `imoq_throws` with `IMOQ_MOCK` (IMQ0101) and with `CPF9898` from `QCPFMSG` |

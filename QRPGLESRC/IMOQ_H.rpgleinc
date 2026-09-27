@@ -235,6 +235,139 @@ dcl-pr imoq_times extproc('IMOQ_TIMES');
   n int(10) const;
 end-pr;
 
+// Copy an argument, as it arrived, into an output parameter, or into
+// the return value (toParm 0). The fields name subfields declared
+// with IMOQFIELD (NAME, or NAME(i)).
+dcl-pr imoq_copyArg extproc('IMOQ_COPYARG');
+  h int(10) const;
+  fromParm int(10) const;
+  toParm int(10) const;
+  fromField varchar(40) const options(*nopass);
+  toField varchar(40) const options(*nopass);
+end-pr;
+
+// Finish each answer with your own procedure, which takes no
+// parameters: imoq_answers(h : %paddr(myAnswer)). It runs after the
+// stub's RETURN, SETPARM and COPYARG, and reads and sets the call
+// with the imoq_answer... procedures below. *null removes it.
+dcl-pr imoq_answers extproc('IMOQ_ANSWERS');
+  h int(10) const;
+  answer pointer(*proc) const;
+end-pr;
+
+// ---- Inside an answer procedure: the call being answered ----------
+// Arguments as they arrived. imoq_answerArg returns *OMIT or
+// *NOTPASSED for missing ones; the typed getters send IMQ0300.
+// A failure in an answer procedure makes the mock end the call with
+// escape message IMQ0102.
+dcl-pr imoq_answerArg varchar(1024) extproc('IMOQ_ANSWERARG');
+  parmNo int(10) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_answerArgNum packed(31:9) extproc('IMOQ_ANSWERARGNUM');
+  parmNo int(10) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_answerArgDate date(*iso) extproc('IMOQ_ANSWERARGDATE');
+  parmNo int(10) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_answerArgTime time(*iso) extproc('IMOQ_ANSWERARGTIME');
+  parmNo int(10) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_answerArgTimestamp timestamp
+       extproc('IMOQ_ANSWERARGTIMESTAMP');
+  parmNo int(10) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_answerArgInd ind extproc('IMOQ_ANSWERARGIND');
+  parmNo int(10) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+// *off when the argument was *OMIT or not passed
+dcl-pr imoq_answerArgPassed ind extproc('IMOQ_ANSWERARGPASSED');
+  parmNo int(10) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+// Set an output parameter, or with field one of its subfields;
+// parameter 0 with a field sets a subfield of the return value
+dcl-pr imoq_answerSetParmChar extproc('IMOQ_ANSWERSETPARMCHAR');
+  parmNo int(10) const;
+  value varchar(1024) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_answerSetParmNum extproc('IMOQ_ANSWERSETPARMNUM');
+  parmNo int(10) const;
+  value packed(31:9) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_answerSetParmDate extproc('IMOQ_ANSWERSETPARMDATE');
+  parmNo int(10) const;
+  value date(*iso) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_answerSetParmTime extproc('IMOQ_ANSWERSETPARMTIME');
+  parmNo int(10) const;
+  value time(*iso) const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+dcl-pr imoq_answerSetParmTimestamp
+       extproc('IMOQ_ANSWERSETPARMTIMESTAMP');
+  parmNo int(10) const;
+  value timestamp const;
+  field varchar(40) const options(*nopass);
+end-pr;
+
+/if not defined(IMOQ_NO_OVERLOAD)
+dcl-pr imoq_answerSetParm overload(imoq_answerSetParmChar
+                                   : imoq_answerSetParmNum
+                                   : imoq_answerSetParmDate
+                                   : imoq_answerSetParmTime
+                                   : imoq_answerSetParmTimestamp);
+/endif
+
+// Set the return value
+dcl-pr imoq_answerReturnsChar extproc('IMOQ_ANSWERRETURNSCHAR');
+  value varchar(1024) const;
+end-pr;
+
+dcl-pr imoq_answerReturnsNum extproc('IMOQ_ANSWERRETURNSNUM');
+  value packed(31:9) const;
+end-pr;
+
+dcl-pr imoq_answerReturnsDate extproc('IMOQ_ANSWERRETURNSDATE');
+  value date(*iso) const;
+end-pr;
+
+dcl-pr imoq_answerReturnsTime extproc('IMOQ_ANSWERRETURNSTIME');
+  value time(*iso) const;
+end-pr;
+
+dcl-pr imoq_answerReturnsTimestamp
+       extproc('IMOQ_ANSWERRETURNSTIMESTAMP');
+  value timestamp const;
+end-pr;
+
+/if not defined(IMOQ_NO_OVERLOAD)
+dcl-pr imoq_answerReturns overload(imoq_answerReturnsChar
+                                   : imoq_answerReturnsNum
+                                   : imoq_answerReturnsDate
+                                   : imoq_answerReturnsTime
+                                   : imoq_answerReturnsTimestamp);
+/endif
+
 // ---- Verification ------------------------------------------------
 // Start a verification; returns its handle. Add matchers with
 // imoq_with, then check. Checks mark the calls they match as

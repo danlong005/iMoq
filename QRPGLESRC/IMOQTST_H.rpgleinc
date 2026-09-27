@@ -6,6 +6,7 @@
 // ------------------------------------------------------------------
 dcl-ds tst_psds psds;
   tst_excId char(7) pos(40);
+  tst_pgmLib char(10) pos(81);
 end-ds;
 dcl-s tst_rptPtr pointer;
 dcl-s tst_rpt char(8000) based(tst_rptPtr);

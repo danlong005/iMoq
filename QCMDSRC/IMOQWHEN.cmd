@@ -12,8 +12,12 @@
                           PROMPT('Return value(s)')
              PARM       KWD(SETPARM) TYPE(SDEF) MAX(64) +
                           PROMPT('Set parameter values')
+             PARM       KWD(COPYARG) TYPE(CDEF) MAX(64) +
+                          PROMPT('Copy arguments')
              PARM       KWD(THROW) TYPE(TDEF) +
                           PROMPT('Send escape message')
+             PARM       KWD(ANSWER) TYPE(ANDEF) +
+                          PROMPT('Answer program or procedure')
              PARM       KWD(TIMES) TYPE(*INT4) DFT(*ALWAYS) +
                           RANGE(1 9999999) SPCVAL((*ALWAYS -1)) +
                           PROMPT('Number of calls to answer')
@@ -33,6 +37,14 @@
                           CASE(*MIXED) MIN(1) PROMPT('Value')
              ELEM       TYPE(*CHAR) LEN(40) DFT(' ') +
                           PROMPT('Field (IMOQFIELD), or NAME(i)')
+ CDEF:       ELEM       TYPE(*INT2) RANGE(1 64) MIN(1) +
+                          PROMPT('From parameter')
+             ELEM       TYPE(*INT2) RANGE(0 64) MIN(1) +
+                          PROMPT('To parameter (0 = return)')
+             ELEM       TYPE(*CHAR) LEN(40) DFT(' ') +
+                          PROMPT('From field (IMOQFIELD)')
+             ELEM       TYPE(*CHAR) LEN(40) DFT(' ') +
+                          PROMPT('To field (IMOQFIELD)')
  TDEF:       ELEM       TYPE(*CHAR) LEN(7) DFT(*NONE) +
                           SPCVAL((*NONE) (*MOCK)) +
                           PROMPT('Message identifier')
@@ -43,3 +55,11 @@
                           PROMPT('Message file library')
              ELEM       TYPE(*CHAR) LEN(256) VARY(*YES *INT2) +
                           CASE(*MIXED) DFT(' ') PROMPT('Message data')
+ ANDEF:      ELEM       TYPE(ANQUAL) PROMPT('Program or service program')
+             ELEM       TYPE(*CHAR) LEN(256) VARY(*YES *INT2) +
+                          CASE(*MIXED) DFT(*PGM) +
+                          PROMPT('Procedure (service programs)')
+ ANQUAL:     QUAL       TYPE(*NAME) LEN(10) DFT(*NONE) +
+                          SPCVAL((*NONE))
+             QUAL       TYPE(*NAME) LEN(10) DFT(*LIBL) +
+                          SPCVAL((*LIBL)) PROMPT('Library')

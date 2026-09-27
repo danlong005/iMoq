@@ -201,6 +201,12 @@
                           MSG('Mock threw: &1') SECLVL('Escape message +
                           sent by IMOQWHEN THROW(*MOCK).') SEV(40) +
                           FMT((*CHAR 512))
+             ADDMSGD    MSGID(IMQ0102) MSGF(&LIB/IMOQMSGF) MSG('&1') +
+                          SECLVL('A stub could not finish its answer: +
+                          COPYARG could not convert an argument to +
+                          the type of its target, or the answer +
+                          procedure (ANSWER, imoq_answers) ended +
+                          with an error.') SEV(40) FMT((*CHAR 512))
              ADDMSGD    MSGID(IMQ0200) MSGF(&LIB/IMOQMSGF) MSG('&1') +
                           SECLVL('&1') SEV(40) FMT((*CHAR 512))
              ADDMSGD    MSGID(IMQ0201) MSGF(&LIB/IMOQMSGF) MSG('&1') +

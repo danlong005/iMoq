@@ -1,11 +1,13 @@
 **free
 // ------------------------------------------------------------------
 // IMOQCMD_T - iMoq command-level tests: stub selection, answers,
-//             TIMES, strict mocks, verification counts, IMOQNOMORE,
-//             call order, unused stubs, capture and reset scopes.
+//             COPYARG, answer procedures, TIMES, strict mocks,
+//             verification counts, IMOQNOMORE, call order, unused
+//             stubs, capture and reset scopes.
 // The mocks are declared but never built: calls go straight to
 // imoq_invoke, the entry point every generated stub calls.
-// Run with IMOQTEST.
+// Run with IMOQTEST. Called without parameters, it is the answer
+// program of test_answerPgm.
 // ------------------------------------------------------------------
 ctl-opt main(runTests) option(*srcstmt:*nodebugio);
 
@@ -14,6 +16,8 @@ ctl-opt main(runTests) option(*srcstmt:*nodebugio);
 // Two service program mocks, each with
 //   PRICE(item char(5) const) returns packed(7:2)
 //   SETQTY(item char(5) const : qty int(10))
+//   SCALE(amount packed(7:2) const : result packed(9:2))
+//     returns packed(7:2)
 dcl-c LOOSE 'IMQTSRV';
 dcl-c STRICT 'IMQTSTR';
 dcl-c LAST -1;
@@ -28,6 +32,10 @@ dcl-proc runTests;
     report char(8000);
     failures int(10);
   end-pi;
+  if %parms() = 0;
+    answerProgram();
+    return;
+  endif;
   tst_init(report);
   if setup();
     test_selection();
@@ -37,6 +45,11 @@ dcl-proc runTests;
     test_strict();
     test_throw();
     test_setParm();
+    test_copyArg();
+    test_copyRejected();
+    test_answerProc();
+    test_answerFails();
+    test_answerByName();
     test_verifyCounts();
     test_noMore();
     test_order();
@@ -98,6 +111,25 @@ dcl-proc price;
   return r;
 end-proc;
 
+// Call SCALE of the loose mock; returns what it returned, and the
+// result parameter as the stub left it
+dcl-proc scale;
+  dcl-pi *n packed(7:2);
+    amount packed(7:2) const;
+    result packed(9:2);
+  end-pi;
+  dcl-s a packed(7:2);
+  dcl-s r packed(7:2);
+  dcl-s ptrs pointer dim(64);
+  dcl-ds thr likeds(imoq_throw_t);
+  a = amount;
+  ptrs(1) = %addr(a);
+  ptrs(2) = %addr(result);
+  imoq_invoke(LOOSE : 'SCALE' : 2 : %addr(ptrs) : %addr(r) : thr);
+  gThrown = thr.msgId;
+  return r;
+end-proc;
+
 // Call SETQTY of the loose mock; returns qty as the stub left it
 dcl-proc setQty;
   dcl-pi *n int(10);
@@ -135,6 +167,8 @@ dcl-proc setup;
          PARMS((*CHAR 5 *CONST))');
     cmd('IMOQPROC OBJ(' + o + ') PROC(SETQTY) +
          PARMS((*CHAR 5 *CONST) (*INT 10))');
+    cmd('IMOQPROC OBJ(' + o + ') PROC(SCALE) RTNTYPE(*PACKED 7 2) +
+         PARMS((*PACKED 7 2 *CONST) (*PACKED 9 2))');
   endfor;
   tst_end();
   return not tst_bad;
@@ -284,6 +318,202 @@ dcl-proc test_setParm;
          SETPARM((2 42))');
     tst_eqNum(42 : setQty('A0001' : 5) : 'matched call');
     tst_eqNum(5 : setQty('B0002' : 5) : 'unmatched call leaves it');
+  on-error;
+    tst_error(imoq_lastError());
+  endmon;
+  tst_end();
+end-proc;
+
+dcl-proc test_copyArg;
+  dcl-s r packed(9:2);
+  tst_begin('COPYARG copies arguments into outputs');
+  monitor;
+    cmd('IMOQRESET');
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(SCALE) COPYARG((1 0) (1 2))');
+    tst_eqNum(12.5 : scale(12.5 : r) : 'to the return value');
+    tst_eqNum(12.5 : r : 'to parameter 2');
+    tst_eqNum(7 : scale(7 : r) : 'every call copies its own');
+
+    // text converts to the target's type
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) COPYARG((1 2))');
+    tst_eqNum(42 : setQty('00042' : 5) : 'char to int');
+    tst_check(gThrown = ' ' : 'char to int sent ' + gThrown);
+
+    // a value that doesn't fit ends the call with IMQ0102
+    setQty('ABC' : 5);
+    tst_eqChar('IMQ0102' : gThrown : 'char ''ABC'' to int');
+    tst_check(%scan('COPYARG 1 to 2' : imoq_lastError()) > 0
+              : 'message names the copy: ' + imoq_lastError());
+
+    // next to RETURN and the matchers of the same stub
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(SCALE) ARGS((1 *GT 100)) +
+         RETURN(1) COPYARG((1 2))');
+    tst_eqNum(1 : scale(200 : r) : 'RETURN');
+    tst_eqNum(200 : r : 'COPYARG next to RETURN');
+    tst_eqNum(3 : scale(3 : r) : 'the older stub');
+  on-error;
+    tst_error(imoq_lastError());
+  endmon;
+  tst_end();
+end-proc;
+
+dcl-proc test_copyRejected;
+  tst_begin('invalid COPYARG entries are rejected');
+  monitor;
+    cmd('IMOQRESET');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SCALE) COPYARG((3 2))'
+          : 'parameter 3 of IMQTSRV.SCALE is not declared');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SCALE) COPYARG((1 3))'
+          : 'parameter 3 of IMQTSRV.SCALE is not declared');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) COPYARG((1 0))'
+          : 'has no declared return value');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SCALE) RETURN(1) COPYARG((1 0))'
+          : 'comes from RETURN already');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SCALE) SETPARM((2 1)) +
+           COPYARG((1 2))' : 'SETPARM entry 1 sets 2 already');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SCALE) COPYARG((1 2 NOPE))'
+          : 'Field NOPE');
+    tst_eqNum(0 : price('A0001') : 'no stub was saved');
+    cmd('IMOQUNUSED');
+  on-error;
+    tst_error(imoq_lastError());
+  endmon;
+  tst_end();
+end-proc;
+
+// ==================================================================
+// Answer procedures. The RPG API (imoq_answers) passes a procedure
+// pointer to imoq_stubSave, as these tests do.
+// ==================================================================
+
+// Save a stub for SCALE with RETURN(1) SETPARM((2 1)), finished by
+// answer procedure ptr
+dcl-proc stubWithAnswer;
+  dcl-pi *n;
+    ptr pointer(*proc) const;
+  end-pi;
+  dcl-ds stub likeds(imoq_stub_t);
+  dcl-ds err likeds(imoq_err_t);
+  clear stub;
+  stub.obj = LOOSE;
+  stub.proc = 'SCALE';
+  stub.times = -1;
+  stub.nRtn = 1;
+  stub.rtn(1) = '1';
+  stub.nSet = 1;
+  stub.setNo(1) = 2;
+  stub.setVal(1) = '1';
+  stub.ansPtr = ptr;
+  tst_check(imoq_stubSave(stub : err) : 'stub not saved: ' + err.text);
+end-proc;
+
+// SCALE: returns amount * 2 and sets result to amount * 3
+dcl-proc doubleIt;
+  dcl-ds err likeds(imoq_err_t);
+  dcl-s v varchar(1024);
+  dcl-s n packed(31:9);
+  imoq_answerGet(1 : '' : v : err);
+  n = %dec(v : 31 : 9);
+  imoq_answerPut(0 : '' : %char(n * 2) : err);
+  imoq_answerPut(2 : '' : %char(n * 3) : err);
+end-proc;
+
+// SCALE: fails
+dcl-proc divideByZero;
+  dcl-s z int(10);
+  z = 1 / z;
+end-proc;
+
+// SCALE: tries to set a parameter SCALE doesn't have
+dcl-proc setsParm3;
+  dcl-ds err likeds(imoq_err_t);
+  if not imoq_answerPut(3 : '' : '1' : err);
+    imoq_setLastError(err.text);
+    divideByZero();
+  endif;
+end-proc;
+
+dcl-proc test_answerProc;
+  dcl-s r packed(9:2);
+  dcl-s v varchar(1024);
+  dcl-ds err likeds(imoq_err_t);
+  tst_begin('an answer procedure reads and sets the call');
+  monitor;
+    cmd('IMOQRESET');
+    stubWithAnswer(%paddr(doubleIt));
+    tst_eqNum(10 : scale(5 : r) : 'return value, not RETURN(1)');
+    tst_eqNum(15 : r : 'parameter 2, not SETPARM((2 1))');
+    tst_eqNum(-2 : scale(-1 : r) : 'every call gets its own');
+    tst_check(gThrown = ' ' : 'the answer sent ' + gThrown);
+    tst_eqNum(5 : %dec(imoq_arg(LOOSE : 'SCALE' : 1 : 1) : 31 : 9)
+              : 'the call is recorded as it arrived');
+
+    tst_check(not imoq_answerGet(1 : '' : v : err)
+              : 'imoq_answerGet worked outside an answer');
+    tst_check(%scan('No call is being answered' : err.text) > 0
+              : 'outside an answer: ' + err.text);
+  on-error;
+    tst_error(imoq_lastError());
+  endmon;
+  tst_end();
+end-proc;
+
+dcl-proc test_answerFails;
+  dcl-s r packed(9:2);
+  tst_begin('a failing answer procedure ends the call with IMQ0102');
+  monitor;
+    cmd('IMOQRESET');
+    stubWithAnswer(%paddr(divideByZero));
+    scale(5 : r);
+    tst_eqChar('IMQ0102' : gThrown : 'MCH1211 in the answer');
+    tst_check(%scan('IMQTSRV.SCALE' : imoq_lastError()) > 0
+              : 'message names the mock: ' + imoq_lastError());
+
+    cmd('IMOQRESET');
+    stubWithAnswer(%paddr(setsParm3));
+    scale(5 : r);
+    tst_eqChar('IMQ0102' : gThrown : 'bad imoq_answerPut');
+    tst_check(%scan('Parameter 3 of IMQTSRV.SCALE is not declared'
+                    : imoq_lastError()) > 0
+              : 'message gives the reason: ' + imoq_lastError());
+  on-error;
+    tst_error(imoq_lastError());
+  endmon;
+  tst_end();
+end-proc;
+
+// Answer program of test_answerPgm: SETQTY's quantity becomes 99
+dcl-proc answerProgram;
+  dcl-ds err likeds(imoq_err_t);
+  imoq_answerPut(2 : '' : '99' : err);
+end-proc;
+
+dcl-proc test_answerByName;
+  tst_begin('ANSWER names a program or a service program export');
+  monitor;
+    cmd('IMOQRESET');
+    // this program, called without parameters
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) ANSWER(IMOQCMD_T)');
+    tst_eqNum(99 : setQty('A0001' : 5) : 'ANSWER(program)');
+    tst_check(gThrown = ' ' : 'ANSWER(program) sent ' + gThrown);
+
+    // any export that takes no parameters will do
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) +
+         ANSWER(IMOQENG imoq_startOrder)');
+    tst_eqNum(5 : setQty('A0001' : 5) : 'ANSWER(srvpgm export)');
+    tst_check(gThrown = ' ' : 'ANSWER(srvpgm export) sent ' + gThrown);
+
+    // in a named library (IMOQTEST builds this program next to IMOQENG)
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) +
+         ANSWER(' + %trim(tst_pgmLib) + '/IMOQENG IMOQ_STARTORDER)');
+    tst_eqNum(5 : setQty('A0001' : 5) : 'ANSWER(lib/srvpgm export)');
+    tst_check(gThrown = ' ' : 'ANSWER(lib/srvpgm export) sent '
+              + gThrown);
+
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) ANSWER(IMQTNOPGM)'
+          : 'was not found');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) ANSWER(IMOQENG IMOQ_NOPE)'
+          : 'does not export a procedure named IMOQ_NOPE');
   on-error;
     tst_error(imoq_lastError());
   endmon;

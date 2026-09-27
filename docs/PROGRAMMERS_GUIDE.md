@@ -452,6 +452,55 @@ IMOQWHEN OBJ(CUSTLKUP) SETPARM((3 '1')) TIMES(1)
 /* first call: found; later calls fall through to older stubs or the default behavior */
 ```
 
+### Copy an argument into the answer
+
+`COPYARG((from to))` copies an argument, as it arrived, into an output parameter, or into the return value when `to` is 0 (Mockito's `returnsArgAt`). The value is converted to the target's type, so `'00042'` in a `*CHAR` parameter becomes 42 in an `*INT` one.
+
+```
+IMOQWHEN OBJ(CONVSRV) PROC(CONVERT) ARGS((2 *EQ USD)) COPYARG((1 0))  /* return the amount given */
+IMOQWHEN OBJ(CUSTLKUP) COPYARG((1 2))                                  /* echo the id back       */
+IMOQWHEN OBJ(ORDSRV) PROC(GETORD) COPYARG((1 0 ' ' ORDERNO))           /* into a field of the DS */
+```
+
+- The third and fourth elements are the source and target [subfields](#data-structures-and-arrays); `' '` means the whole parameter.
+- The source must be a declared parameter. The target follows the `SETPARM` rules: it can't be passed `*VALUE`, and one target can't also be set by `SETPARM`. Copying into the whole return value replaces `RETURN`.
+- An argument that was omitted or not passed copies nothing. A value that doesn't fit its target (`'ABC'` into a number) ends the call with **IMQ0102**.
+
+### Compute the answer with your own procedure
+
+When a copy isn't enough, `ANSWER` names your own procedure, which computes the answer from the arguments (Moq's `Returns(x => …)` and `Callback`, Mockito's `thenAnswer`). It takes no parameters. It reads the call being answered, and sets its outputs, through the `imoq_answer…` procedures in `IMOQ_H`:
+
+```rpgle
+dcl-proc taxAnswer export;
+  // 6% of the amount, 8% for NY
+  if imoq_answerArg(2) = 'NY';
+    imoq_answerReturns(imoq_answerArgNum(1) * 0.08);
+  else;
+    imoq_answerReturns(imoq_answerArgNum(1) * 0.06);
+  endif;
+end-proc;
+```
+
+```
+IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) ANSWER(MYTESTS TAXANSWER)   /* export of a service program */
+IMOQWHEN OBJ(CUSTLKUP) ANSWER(MYLIB/CUSTANS)                   /* a program                   */
+```
+
+From RPG, `imoq_answers(h : %paddr(taxAnswer))` uses any procedure of the test, exported or not. With a command, `ANSWER(srvpgm proc)` names an export of a service program, such as the RPGUnit test service program itself, and `ANSWER(pgm)` calls a program. iMoq checks that the object or export exists when `IMOQWHEN` runs.
+
+| Procedure | What it does |
+|---|---|
+| `imoq_answerArg(parmNo : field)` | The argument (or subfield) as it arrived, as text; `*OMIT` or `*NOTPASSED` for missing ones |
+| `imoq_answerArgNum` · `…Date` · `…Time` · `…Timestamp` · `…Ind` | The argument as a `packed(31:9)`, date, time, timestamp or indicator |
+| `imoq_answerArgPassed(parmNo : field)` | `*off` if the argument was `*OMIT` or not passed |
+| `imoq_answerReturns(value)` | Sets the return value |
+| `imoq_answerSetParm(parmNo : value : field)` | Sets an output parameter, or one of its subfields. Parameter 0 with a field sets a subfield of a data structure return value |
+
+- The answer procedure runs last, after the stub's `RETURN`, `SETPARM` and `COPYARG`, so it can change what they set. `THROW` wins over all of them.
+- The arguments it reads are the ones that arrived, before anything was set. The recorded call is unchanged too.
+- If it ends with an error, including an `imoq_answer…` call that failed, the code under test gets escape message **IMQ0102**, which says why.
+- `imoq_answerReturns` and `imoq_answerSetParm` overload by type, like `imoq_returns`; without `OVERLOAD`, call `imoq_answerReturnsNum`, `imoq_answerSetParmChar` and so on.
+
 ### Simulate a failure
 
 `THROW` sends an escape message to the caller.
@@ -567,6 +616,8 @@ assert(imoq_calledOnce(v) : imoq_lastError());
 | `imoq_setParm(h : parmNo : value : field)` | Fills an output parameter, or with `field` one of its subfields. Parameter 0 with a field sets a subfield of a data structure return value | `SETPARM((n value field))` |
 | `imoq_throws(h : msgId : msgDta : msgf : msgfLib)` | Sends an escape message instead of answering. `msgId` `IMOQ_MOCK` sends **IMQ0101**; for another message ID, pass its message file (`msgfLib` defaults to `*LIBL`) | `THROW(…)` |
 | `imoq_times(h : n)` | Answers only `n` calls (default `IMOQ_ALWAYS`) | `TIMES(n)` |
+| `imoq_copyArg(h : from : to : fromField : toField)` | Copies an argument into an output parameter, or into the return value (`to` 0). The fields are optional | `COPYARG((from to fromField toField))` |
+| `imoq_answers(h : %paddr(proc))` | Finishes each answer with your own procedure, which reads and sets the call with the [`imoq_answer…` procedures](#compute-the-answer-with-your-own-procedure). `*null` removes it | `ANSWER(obj proc)` |
 
 On a compiler without `OVERLOAD` (before 7.4 TR5), `/define IMOQ_NO_OVERLOAD` before copying `IMOQ_H`, and call the typed procedures directly: `imoq_withChar`, `imoq_withNum`, `imoq_returnsDate` and so on.
 
@@ -604,6 +655,7 @@ A successful check marks the calls it matched as verified, as `IMOQVERIFY` does.
 ### When something goes wrong
 
 - **Setup calls** (`imoq_when`, `imoq_with`, `imoq_returns`, `imoq_setParm`, `imoq_throws`, `imoq_times`, `imoq_verify`, `imoq_reset` and the typed `imoq_arg…` procedures) send escape message **IMQ0300** with the reason. RPGUnit reports the test as an error. That includes using a stub handle after `imoq_reset` removed the stub.
+- **Answer procedures** that fail, or whose `imoq_answer…` calls fail, end the mocked call with escape message **IMQ0102** to the code under test.
 - **Checks** (`imoq_called…` including `imoq_calledInOrder`, `imoq_neverCalled`, `imoq_noMoreCalls`, `imoq_noUnusedStubs`) return `*off`. `imoq_lastError()` explains why, so pass it to `assert`.
 
 ### RPGUnit assertions
@@ -699,6 +751,7 @@ The [EXLIB example](EXAMPLES.md#exlib-create-a-mock-in-another-library) shows al
 | IMQ0020 / IMQ0021 | `IMOQCHK` finding / summary |
 | IMQ0100 | A strict mock received a call no stub matched |
 | IMQ0101 | Sent by `THROW(*MOCK …)` |
+| IMQ0102 | A stub couldn't finish its answer: `COPYARG` couldn't convert an argument, or the answer procedure (`ANSWER`, `imoq_answers`) ended with an error |
 | IMQ0200 / IMQ0201 | Verification (`IMOQVERIFY`, `IMOQORDER`) failed / unverified interactions |
 | IMQ0202 | `IMOQGETARG`: no call with that number |
 | IMQ0203 | `IMOQUNUSED`: a stub answered no call |
@@ -751,10 +804,7 @@ To test that code, call it directly from the driver job.
 
 Some things Mockito and Moq can do aren't in iMoq yet. The planned work is tracked in [todo.md](../todo.md).
 
-- **Answers built from the arguments.** Every answer is a fixed value; a stub can't copy an input to an output or call your own procedure.
-- **Checking call order.** `IMOQVERIFY` counts calls but can't check that one call came before another.
-- **Unused stubs.** A stub that no call matched isn't reported, so a wrong matcher shows up only as a missing answer.
-- **Either-or matchers.** All matchers in one `ARGS` must match. For alternatives, define one stub per alternative.
+- **Either-or matchers across parameters.** All matchers in one `ARGS` must match. `*IN` covers several values of one parameter; for alternatives across parameters, define one stub per alternative.
 
 iMoq also never passes a call on to the real object, as a Mockito spy or Moq's `CallBase` would. That's deliberate: a test that can reach the real program can also change real data.
 
@@ -771,7 +821,7 @@ The mock is identified by `OBJ(name)`. Service program mocks also take `PROC(exp
 | `IMOQPROC` | `OBJ` · `PROC` · `RTNTYPE(type len dec)` · `PARMS((type len dec\|passing [passing]) …)` | – |
 | `IMOQFIELD` | `OBJ` · `PROC` · `PARM(n\|0)` · `FIELDS((name pos\|*NEXT type len dec [elements]) …)` | – |
 | `IMOQBUILD` | `OBJ` | – |
-| `IMOQWHEN` | `OBJ` · `PROC(*PGM\|name)` · `ARGS((n matcher value [field]) …)` · `RETURN(v …)` · `SETPARM((n value [field]) …)` · `THROW(msgid msgf lib data)` · `TIMES(*ALWAYS\|n)` | `when().thenReturn()/thenThrow()` / `Setup().Returns()/Callback()/Throws()` |
+| `IMOQWHEN` | `OBJ` · `PROC(*PGM\|name)` · `ARGS((n matcher value [field]) …)` · `RETURN(v …)` · `SETPARM((n value [field]) …)` · `COPYARG((from to [fromField] [toField]) …)` · `THROW(msgid msgf lib data)` · `ANSWER(lib/obj [proc])` · `TIMES(*ALWAYS\|n)` | `when().thenReturn()/thenThrow()/thenAnswer()` / `Setup().Returns()/Callback()/Throws()` |
 | `IMOQVERIFY` | `OBJ` · `PROC` · `ARGS` · `TIMES(*ONCE\|*NEVER\|*EXACTLY n\|*ATLEAST n\|*ATMOST n)` | `verify(m, times(n))` / `Verify(Times)` |
 | `IMOQORDER` | `OBJ` · `PROC` · `ARGS` · `AFTER(*PREV\|*START)` | `inOrder(…).verify(m)` / `MockSequence` |
 | `IMOQNOMORE` | `OBJ(*ALL\|name)` | `verifyNoMoreInteractions()` / `VerifyNoOtherCalls()` |
@@ -786,7 +836,8 @@ From RPG, the same stubbing and verification is available as the [RPG API](#8-wr
 
 | RPG API | Command |
 |---|---|
-| `h = imoq_when(obj : proc)` · `imoq_with` · `imoq_returns` · `imoq_setParm` · `imoq_throws` · `imoq_times` | `IMOQWHEN` |
+| `h = imoq_when(obj : proc)` · `imoq_with` · `imoq_returns` · `imoq_setParm` · `imoq_copyArg` · `imoq_answers` · `imoq_throws` · `imoq_times` | `IMOQWHEN` |
+| `imoq_answerArg` / `Num` / `Date` / `Time` / `Timestamp` / `Ind` · `imoq_answerArgPassed` · `imoq_answerReturns` · `imoq_answerSetParm` | inside an answer procedure |
 | `v = imoq_verify(obj : proc)` · `imoq_with` · `imoq_calledOnce` / `imoq_calledTimes` / `imoq_calledAtLeast` / `imoq_calledAtMost` / `imoq_neverCalled` | `IMOQVERIFY` |
 | `imoq_calledInOrder(v)` · `imoq_startOrder()` | `IMOQORDER` |
 | `imoq_matchCount(v)` · `imoq_count(obj : proc)` | `IMOQCOUNT` |
@@ -797,7 +848,7 @@ From RPG, the same stubbing and verification is available as the [RPG API](#8-wr
 
 ### Limits
 
-- Up to 64 parameters per program or procedure, 64 `ARGS`/`SETPARM` entries and 32 `RETURN` values. Command values are at most 256 characters; RPG API values up to 1,024.
+- Up to 64 parameters per program or procedure, 64 `ARGS`/`SETPARM`/`COPYARG` entries and 32 `RETURN` values. Up to 500 stubs at a time can have an answer procedure from `imoq_answers`. Command values are at most 256 characters; RPG API values up to 1,024.
 - Up to 64 fields per parameter, 999 elements per array field and 256 fields per procedure. Up to 2,000 subfield values are recorded per call.
 - Captured argument text is cut at 1,024 characters. Dates and times use ISO format.
 - `*VARCHAR` can't be passed `*VALUE`. A data export is mocked as `char(n)` storage of the real size.

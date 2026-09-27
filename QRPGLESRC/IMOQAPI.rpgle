@@ -13,6 +13,9 @@
 //   Setup calls send escape IMQ0300 to the test when they fail.
 //   Checks (imoq_called..., imoq_noMoreCalls, imoq_noUnusedStubs)
 //   return *off and leave the reason in imoq_lastError().
+//   The imoq_answer... procedures work on the call an answer
+//   procedure is answering; they send IMQ0300 too, which makes the
+//   mock end the call with IMQ0102.
 // ------------------------------------------------------------------
 ctl-opt nomain option(*srcstmt:*nodebugio);
 
@@ -322,6 +325,142 @@ dcl-proc argText;
   return *on;
 end-proc;
 
+// Argument of the call being answered, as text; *off if no call is
+// being answered
+dcl-proc answerText;
+  dcl-pi *n ind;
+    parmNo int(10) const;
+    fieldIn varchar(40) const;
+    value varchar(1024);
+    passed ind options(*nopass);
+  end-pi;
+  dcl-ds err likeds(imoq_err_t);
+  dcl-s field varchar(40);
+  dcl-s msg varchar(256);
+  if not imoq_parseField(fieldIn : field : msg);
+    gMsg = msg;
+    return *off;
+  endif;
+  if not imoq_answerGet(parmNo : field : value : err);
+    gMsg = %trimr(err.text);
+    return *off;
+  endif;
+  if value = '*OMIT' or value = '*NOTPASSED';
+    if %parms() >= %parmnum(passed);
+      passed = *off;
+      return *on;
+    endif;
+    gMsg = 'Parameter ' + %char(parmNo) + ' has no value (' + value + ')';
+    return *off;
+  endif;
+  if %parms() >= %parmnum(passed);
+    passed = *on;
+  endif;
+  return *on;
+end-proc;
+
+// Set an output parameter or the return value (parmNo 0) of the
+// call being answered
+dcl-proc answerSet;
+  dcl-pi *n ind;
+    parmNo int(10) const;
+    fieldIn varchar(40) const;
+    value varchar(1024) const;
+  end-pi;
+  dcl-ds err likeds(imoq_err_t);
+  dcl-s field varchar(40);
+  dcl-s msg varchar(256);
+  if not imoq_parseField(fieldIn : field : msg);
+    gMsg = msg;
+    return *off;
+  endif;
+  if not imoq_answerPut(parmNo : field : value : err);
+    gMsg = %trimr(err.text);
+    return *off;
+  endif;
+  return *on;
+end-proc;
+
+// Argument text to a typed value; *off with gMsg set if it doesn't
+// convert
+dcl-proc textNum;
+  dcl-pi *n ind;
+    v varchar(1024) const;
+    parmNo int(10) const;
+    n packed(31:9);
+  end-pi;
+  monitor;
+    n = %dec(v : 31 : 9);
+    return *on;
+  on-error;
+    gMsg = 'Parameter ' + %char(parmNo) + ' is not a number: ''' + v + '''';
+  endmon;
+  return *off;
+end-proc;
+
+dcl-proc textDate;
+  dcl-pi *n ind;
+    v varchar(1024) const;
+    parmNo int(10) const;
+    d date(*iso);
+  end-pi;
+  monitor;
+    d = %date(v : *iso);
+    return *on;
+  on-error;
+    gMsg = 'Parameter ' + %char(parmNo) + ' is not an *ISO date: '''
+         + v + '''';
+  endmon;
+  return *off;
+end-proc;
+
+dcl-proc textTime;
+  dcl-pi *n ind;
+    v varchar(1024) const;
+    parmNo int(10) const;
+    t time(*iso);
+  end-pi;
+  monitor;
+    t = %time(v : *iso);
+    return *on;
+  on-error;
+    gMsg = 'Parameter ' + %char(parmNo) + ' is not an *ISO time: '''
+         + v + '''';
+  endmon;
+  return *off;
+end-proc;
+
+dcl-proc textTimestamp;
+  dcl-pi *n ind;
+    v varchar(1024) const;
+    parmNo int(10) const;
+    ts timestamp;
+  end-pi;
+  monitor;
+    ts = %timestamp(v : *iso);
+    return *on;
+  on-error;
+    gMsg = 'Parameter ' + %char(parmNo) + ' is not a timestamp: '''
+         + v + '''';
+  endmon;
+  return *off;
+end-proc;
+
+dcl-proc textInd;
+  dcl-pi *n ind;
+    v varchar(1024) const;
+    parmNo int(10) const;
+    i ind;
+  end-pi;
+  if v <> '0' and v <> '1';
+    gMsg = 'Parameter ' + %char(parmNo) + ' is not an indicator: '''
+         + v + '''';
+    return *off;
+  endif;
+  i = (v = '1');
+  return *on;
+end-proc;
+
 // ==================================================================
 // Stubbing
 // ==================================================================
@@ -621,6 +760,71 @@ dcl-proc imoq_times export;
   endif;
 end-proc;
 
+// imoq_copyArg(h : from : to : fromField : toField) - copy an
+// argument, as it arrived, into an output parameter or (to 0) the
+// return value
+dcl-proc imoq_copyArg export;
+  dcl-pi *n;
+    h int(10) const;
+    fromParm int(10) const;
+    toParm int(10) const;
+    fromField varchar(40) const options(*nopass);
+    toField varchar(40) const options(*nopass);
+  end-pi;
+  dcl-ds stub likeds(imoq_stub_t);
+  dcl-s fromFld varchar(40);
+  dcl-s toFld varchar(40);
+  dcl-s msg varchar(256);
+  if %parms() >= %parmnum(fromField)
+     and not imoq_parseField(fromField : fromFld : msg);
+    fail(msg);
+    return;
+  endif;
+  if %parms() >= %parmnum(toField)
+     and not imoq_parseField(toField : toFld : msg);
+    fail(msg);
+    return;
+  endif;
+  if not loadStub(h : stub);
+    fail(gMsg);
+    return;
+  endif;
+  if stub.nCopy >= IMOQ_MAXP;
+    fail('At most 64 COPYARG entries are allowed');
+    return;
+  endif;
+  stub.nCopy += 1;
+  stub.cpFrom(stub.nCopy) = fromParm;
+  stub.cpFromFld(stub.nCopy) = fromFld;
+  stub.cpTo(stub.nCopy) = toParm;
+  stub.cpToFld(stub.nCopy) = toFld;
+  if not saveStub(stub);
+    fail(gMsg);
+  endif;
+end-proc;
+
+// imoq_answers(h : %paddr(proc)) - call proc, which takes no
+// parameters, to finish each answer. It reads and sets the call
+// with the imoq_answer... procedures. *null removes it.
+dcl-proc imoq_answers export;
+  dcl-pi *n;
+    h int(10) const;
+    answer pointer(*proc) const;
+  end-pi;
+  dcl-ds stub likeds(imoq_stub_t);
+  if not loadStub(h : stub);
+    fail(gMsg);
+    return;
+  endif;
+  stub.ansObj = ' ';
+  stub.ansLib = ' ';
+  stub.ansProc = '';
+  stub.ansPtr = answer;
+  if not saveStub(stub);
+    fail(gMsg);
+  endif;
+end-proc;
+
 // ==================================================================
 // Verification
 // ==================================================================
@@ -833,19 +1037,16 @@ dcl-proc imoq_argNum export;
   end-pi;
   dcl-s f varchar(40);
   dcl-s v varchar(1024);
+  dcl-s n packed(31:9);
   if %parms() >= %parmnum(field);
     f = field;
   endif;
-  if not argText(obj : proc : callNo : parmNo : f : v);
+  if not argText(obj : proc : callNo : parmNo : f : v)
+     or not textNum(v : parmNo : n);
     fail(gMsg);
     return 0;
   endif;
-  monitor;
-    return %dec(v : 31 : 9);
-  on-error;
-    fail('Parameter ' + %char(parmNo) + ' is not a number: ''' + v + '''');
-  endmon;
-  return 0;
+  return n;
 end-proc;
 
 dcl-proc imoq_argDate export;
@@ -858,20 +1059,16 @@ dcl-proc imoq_argDate export;
   end-pi;
   dcl-s f varchar(40);
   dcl-s v varchar(1024);
+  dcl-s d date(*iso);
   if %parms() >= %parmnum(field);
     f = field;
   endif;
-  if not argText(obj : proc : callNo : parmNo : f : v);
+  if not argText(obj : proc : callNo : parmNo : f : v)
+     or not textDate(v : parmNo : d);
     fail(gMsg);
     return *loval;
   endif;
-  monitor;
-    return %date(v : *iso);
-  on-error;
-    fail('Parameter ' + %char(parmNo) + ' is not an *ISO date: '''
-       + v + '''');
-  endmon;
-  return *loval;
+  return d;
 end-proc;
 
 dcl-proc imoq_argTime export;
@@ -884,20 +1081,16 @@ dcl-proc imoq_argTime export;
   end-pi;
   dcl-s f varchar(40);
   dcl-s v varchar(1024);
+  dcl-s t time(*iso);
   if %parms() >= %parmnum(field);
     f = field;
   endif;
-  if not argText(obj : proc : callNo : parmNo : f : v);
+  if not argText(obj : proc : callNo : parmNo : f : v)
+     or not textTime(v : parmNo : t);
     fail(gMsg);
     return *loval;
   endif;
-  monitor;
-    return %time(v : *iso);
-  on-error;
-    fail('Parameter ' + %char(parmNo) + ' is not an *ISO time: '''
-       + v + '''');
-  endmon;
-  return *loval;
+  return t;
 end-proc;
 
 dcl-proc imoq_argTimestamp export;
@@ -910,20 +1103,16 @@ dcl-proc imoq_argTimestamp export;
   end-pi;
   dcl-s f varchar(40);
   dcl-s v varchar(1024);
+  dcl-s ts timestamp;
   if %parms() >= %parmnum(field);
     f = field;
   endif;
-  if not argText(obj : proc : callNo : parmNo : f : v);
+  if not argText(obj : proc : callNo : parmNo : f : v)
+     or not textTimestamp(v : parmNo : ts);
     fail(gMsg);
     return *loval;
   endif;
-  monitor;
-    return %timestamp(v : *iso);
-  on-error;
-    fail('Parameter ' + %char(parmNo) + ' is not a timestamp: '''
-       + v + '''');
-  endmon;
-  return *loval;
+  return ts;
 end-proc;
 
 dcl-proc imoq_argInd export;
@@ -936,19 +1125,16 @@ dcl-proc imoq_argInd export;
   end-pi;
   dcl-s f varchar(40);
   dcl-s v varchar(1024);
+  dcl-s i ind;
   if %parms() >= %parmnum(field);
     f = field;
   endif;
-  if not argText(obj : proc : callNo : parmNo : f : v);
+  if not argText(obj : proc : callNo : parmNo : f : v)
+     or not textInd(v : parmNo : i);
     fail(gMsg);
     return *off;
   endif;
-  if v <> '0' and v <> '1';
-    fail('Parameter ' + %char(parmNo) + ' is not an indicator: '''
-       + v + '''');
-    return *off;
-  endif;
-  return v = '1';
+  return i;
 end-proc;
 
 // *off when the parameter was omitted (*OMIT) or not passed
@@ -971,4 +1157,262 @@ dcl-proc imoq_argPassed export;
     return *off;
   endif;
   return passed;
+end-proc;
+
+// ==================================================================
+// Answer procedures: the call being answered
+// ==================================================================
+
+// Its arguments as they arrived. imoq_answerArg returns *OMIT or
+// *NOTPASSED for missing ones; the typed getters fail on them.
+dcl-proc imoq_answerArg export;
+  dcl-pi *n varchar(1024);
+    parmNo int(10) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  dcl-s v varchar(1024);
+  dcl-s passed ind;
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerText(parmNo : f : v : passed);
+    fail(gMsg);
+    return '';
+  endif;
+  return v;
+end-proc;
+
+dcl-proc imoq_answerArgNum export;
+  dcl-pi *n packed(31:9);
+    parmNo int(10) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  dcl-s v varchar(1024);
+  dcl-s n packed(31:9);
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerText(parmNo : f : v) or not textNum(v : parmNo : n);
+    fail(gMsg);
+    return 0;
+  endif;
+  return n;
+end-proc;
+
+dcl-proc imoq_answerArgDate export;
+  dcl-pi *n date(*iso);
+    parmNo int(10) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  dcl-s v varchar(1024);
+  dcl-s d date(*iso);
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerText(parmNo : f : v) or not textDate(v : parmNo : d);
+    fail(gMsg);
+    return *loval;
+  endif;
+  return d;
+end-proc;
+
+dcl-proc imoq_answerArgTime export;
+  dcl-pi *n time(*iso);
+    parmNo int(10) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  dcl-s v varchar(1024);
+  dcl-s t time(*iso);
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerText(parmNo : f : v) or not textTime(v : parmNo : t);
+    fail(gMsg);
+    return *loval;
+  endif;
+  return t;
+end-proc;
+
+dcl-proc imoq_answerArgTimestamp export;
+  dcl-pi *n timestamp;
+    parmNo int(10) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  dcl-s v varchar(1024);
+  dcl-s ts timestamp;
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerText(parmNo : f : v)
+     or not textTimestamp(v : parmNo : ts);
+    fail(gMsg);
+    return *loval;
+  endif;
+  return ts;
+end-proc;
+
+dcl-proc imoq_answerArgInd export;
+  dcl-pi *n ind;
+    parmNo int(10) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  dcl-s v varchar(1024);
+  dcl-s i ind;
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerText(parmNo : f : v) or not textInd(v : parmNo : i);
+    fail(gMsg);
+    return *off;
+  endif;
+  return i;
+end-proc;
+
+// *off when the parameter was omitted (*OMIT) or not passed
+dcl-proc imoq_answerArgPassed export;
+  dcl-pi *n ind;
+    parmNo int(10) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  dcl-s v varchar(1024);
+  dcl-s passed ind;
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerText(parmNo : f : v : passed);
+    fail(gMsg);
+    return *off;
+  endif;
+  return passed;
+end-proc;
+
+// imoq_answerSetParm(parmNo : value : field) - set an output
+// parameter (or one of its subfields); parameter 0 with a field sets
+// a subfield of the return value
+dcl-proc imoq_answerSetParmChar export;
+  dcl-pi *n;
+    parmNo int(10) const;
+    value varchar(1024) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerSet(parmNo : f : value);
+    fail(gMsg);
+  endif;
+end-proc;
+
+dcl-proc imoq_answerSetParmNum export;
+  dcl-pi *n;
+    parmNo int(10) const;
+    value packed(31:9) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerSet(parmNo : f : imoq_numText(value));
+    fail(gMsg);
+  endif;
+end-proc;
+
+dcl-proc imoq_answerSetParmDate export;
+  dcl-pi *n;
+    parmNo int(10) const;
+    value date(*iso) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerSet(parmNo : f : %char(value : *iso));
+    fail(gMsg);
+  endif;
+end-proc;
+
+dcl-proc imoq_answerSetParmTime export;
+  dcl-pi *n;
+    parmNo int(10) const;
+    value time(*iso) const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerSet(parmNo : f : %char(value : *iso));
+    fail(gMsg);
+  endif;
+end-proc;
+
+dcl-proc imoq_answerSetParmTimestamp export;
+  dcl-pi *n;
+    parmNo int(10) const;
+    value timestamp const;
+    field varchar(40) const options(*nopass);
+  end-pi;
+  dcl-s f varchar(40);
+  if %parms() >= %parmnum(field);
+    f = field;
+  endif;
+  if not answerSet(parmNo : f : %char(value : *iso));
+    fail(gMsg);
+  endif;
+end-proc;
+
+// imoq_answerReturns(value) - set the return value
+dcl-proc imoq_answerReturnsChar export;
+  dcl-pi *n;
+    value varchar(1024) const;
+  end-pi;
+  if not answerSet(0 : '' : value);
+    fail(gMsg);
+  endif;
+end-proc;
+
+dcl-proc imoq_answerReturnsNum export;
+  dcl-pi *n;
+    value packed(31:9) const;
+  end-pi;
+  if not answerSet(0 : '' : imoq_numText(value));
+    fail(gMsg);
+  endif;
+end-proc;
+
+dcl-proc imoq_answerReturnsDate export;
+  dcl-pi *n;
+    value date(*iso) const;
+  end-pi;
+  if not answerSet(0 : '' : %char(value : *iso));
+    fail(gMsg);
+  endif;
+end-proc;
+
+dcl-proc imoq_answerReturnsTime export;
+  dcl-pi *n;
+    value time(*iso) const;
+  end-pi;
+  if not answerSet(0 : '' : %char(value : *iso));
+    fail(gMsg);
+  endif;
+end-proc;
+
+dcl-proc imoq_answerReturnsTimestamp export;
+  dcl-pi *n;
+    value timestamp const;
+  end-pi;
+  if not answerSet(0 : '' : %char(value : *iso));
+    fail(gMsg);
+  endif;
 end-proc;

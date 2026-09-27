@@ -1,14 +1,11 @@
 # iMoq to-do list
 
 Work still to do on iMoq, from a review of its features and gaps
-(2026-09-22, updated 2026-09-25 after *IN and *BETWEEN). Items are
+(2026-09-22, updated 2026-09-26 after COPYARG and ANSWER). Items are
 roughly in priority order within each section.
 
 ## Features
 
-- [ ] **Answers built from the arguments.** For example, set parameter 2 from
-      parameter 1, or call a user procedure like Moq's `Callback`. Today every
-      answer is a fixed value.
 - [ ] **OR between matchers.** All `ARGS` entries must match today. `*IN`
       covers one parameter with several values; OR across parameters needs
       a syntax. Two stubs with the same answer work in the meantime.
