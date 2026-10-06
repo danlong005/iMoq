@@ -35,8 +35,9 @@ IMOQRMV
     with OR groups for alternatives across parameters
   - consecutive answers and `TIMES(n)` limits
   - loose or strict mocks
-  - data structure subfields, array elements and data structure return
-    values, each matched and set by its own type
+  - data structure subfields, array elements, data structures inside data
+    structures and data structure return values, each matched and set by
+    its own type
 - **Verification:** exact, at-least, at-most and never counts, call order
   (`IMOQORDER`), `IMOQNOMORE`, unused-stub detection (`IMOQUNUSED`) and
   argument capture.

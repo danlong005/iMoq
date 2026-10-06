@@ -20,6 +20,8 @@
                           (*CHAR 60 *CONST))
              IMOQPROC   OBJ(EXORDER) PROC(EX_PRICEIT) +
                           PARMS((*CHAR 28))
+             IMOQPROC   OBJ(EXORDER) PROC(EX_SHIP) +
+                          RTNTYPE(*PACKED 7 2) PARMS((*CHAR 59))
 
 /*    Parameter 1: order_t. *NEXT follows the previous field.        */
              IMOQFIELD  OBJ(EXORDER) PROC(EX_ADDORDER) PARM(1) +
@@ -37,6 +39,14 @@
              IMOQFIELD  OBJ(EXORDER) PROC(EX_ADDORDER) PARM(0) +
                           FIELDS((STATUS 1 *CHAR 2) (TOTAL *NEXT +
                           *PACKED 11 2) (LINENO *NEXT *INT 10))
+/*    EX_SHIP: shipment_t. A *DS field has the size of one element; */
+/*    the fields in it are DS.NAME, positioned from 1 within it.    */
+             IMOQFIELD  OBJ(EXORDER) PROC(EX_SHIP) PARM(1) +
+                          FIELDS((ID 1 *CHAR 5) (DEST *NEXT *DS 30) +
+                          (DEST.CITY 1 *CHAR 20) (DEST.ZIP *NEXT +
+                          *CHAR 10) (LINES *NEXT *DS 8 0 3) +
+                          (LINES.SKU 1 *CHAR 5) (LINES.QTY *NEXT +
+                          *PACKED 5 0))
              IMOQBUILD  OBJ(EXORDER)
 
 /* 2. Compile the test program                                      */

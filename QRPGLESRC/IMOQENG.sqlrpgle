@@ -17,6 +17,7 @@ dcl-c MAXCALLS 5000;
 dcl-c MAXSTUBS 500;
 dcl-c MAXFIELDS 256;         // declared subfields per procedure
 dcl-c MAXFVALS 2000;         // subfield values recorded per call
+dcl-c MAXDEPTH 8;            // data structures inside each other
 dcl-c NAMECHARS 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_#$@';
 dcl-c DIGITS '0123456789';
 
@@ -821,7 +822,9 @@ dcl-proc openTarget;
 end-proc;
 
 // ==================================================================
-// Subfield references: NAME, or NAME(i) for an array element
+// Subfield references: NAME, NAME(i) for an array element, and
+// GROUP.NAME for a field of a data structure (*DS) field, such as
+// ITEMS(3).QTY or SHIP.CITY
 // ==================================================================
 dcl-proc imoq_parseField export;
   dcl-pi *n ind;
@@ -829,43 +832,75 @@ dcl-proc imoq_parseField export;
     field varchar(40);
     msg varchar(256);
   end-pi;
+  dcl-s rest varchar(64);
+  dcl-s seg varchar(64);
   dcl-s name varchar(64);
   dcl-s idx varchar(64);
+  dcl-s norm varchar(200);
+  dcl-s p int(10);
   dcl-s q int(10);
   dcl-s i int(10);
 
   field = '';
-  msg = '''' + %trim(text) + ''' is not a field name. Use NAME, or '
-      + 'NAME(i) for an array element';
-  name = %xlate(LOWER : UPPER : %trim(text));
-  if name = '';
+  msg = '''' + %trim(text) + ''' is not a field name. Use NAME, '
+      + 'NAME(i) for an array element, or DS.NAME for a field of a '
+      + 'data structure';
+  rest = %xlate(LOWER : UPPER : %trim(text));
+  if rest = '';
     msg = '';
     return *on;
   endif;
-  q = %scan('(' : name);
-  if q > 0;
-    if %subst(name : %len(name) : 1) <> ')' or q < 2
-       or q > %len(name) - 2;
+  dow rest <> '';
+    p = %scan('.' : rest);
+    if p = %len(rest);
       return *off;
     endif;
-    idx = %trim(%subst(name : q + 1 : %len(name) - q - 1));
-    name = %trim(%subst(name : 1 : q - 1));
-    if idx = '' or %len(idx) > 3 or %check(DIGITS : idx) > 0;
+    if p > 0;
+      seg = %trim(%subst(rest : 1 : p - 1));
+      rest = %subst(rest : p + 1);
+    else;
+      seg = %trim(rest);
+      rest = '';
+    endif;
+    if seg = '';
       return *off;
     endif;
-    i = %int(idx);
-    if i < 1;
-      msg = 'Array elements are numbered from 1';
+    name = seg;
+    i = 0;
+    q = %scan('(' : seg);
+    if q > 0;
+      if %subst(seg : %len(seg) : 1) <> ')' or q < 2
+         or q > %len(seg) - 2;
+        return *off;
+      endif;
+      idx = %trim(%subst(seg : q + 1 : %len(seg) - q - 1));
+      name = %trim(%subst(seg : 1 : q - 1));
+      if idx = '' or %len(idx) > 3 or %check(DIGITS : idx) > 0;
+        return *off;
+      endif;
+      i = %int(idx);
+      if i < 1;
+        msg = 'Array elements are numbered from 1';
+        return *off;
+      endif;
+    endif;
+    if %len(name) > 30 or %check(NAMECHARS : name) > 0
+       or %scan(%subst(name : 1 : 1) : DIGITS) > 0;
       return *off;
     endif;
-  endif;
-  if %len(name) > 30 or %check(NAMECHARS : name) > 0;
+    if norm <> '';
+      norm += '.';
+    endif;
+    norm += name;
+    if q > 0;
+      norm += '(' + %char(i) + ')';
+    endif;
+  enddo;
+  if %len(norm) > 40;
+    msg = 'Field reference ' + norm + ' is longer than 40 characters';
     return *off;
   endif;
-  field = name;
-  if q > 0;
-    field += '(' + %char(i) + ')';
-  endif;
+  field = norm;
   msg = '';
   return *on;
 end-proc;
@@ -888,7 +923,6 @@ dcl-proc splitField;
   idx = %int(%subst(field : q + 1 : %len(field) - q - 1));
 end-proc;
 
-// 2, 2.QTY or 0.TOTAL, as written in commands
 dcl-proc refText;
   dcl-pi *n varchar(48);
     parmNo int(10) const;
@@ -898,6 +932,216 @@ dcl-proc refText;
     return %char(parmNo);
   endif;
   return %char(parmNo) + '.' + field;
+end-proc;
+
+// Last part of a field path: SKU of ITEMS.SKU
+dcl-proc lastSeg;
+  dcl-pi *n varchar(30);
+    path varchar(30) const;
+  end-pi;
+  dcl-s p int(10);
+  p = %scanr('.' : path);
+  if p = 0;
+    return path;
+  endif;
+  return %subst(path : p + 1);
+end-proc;
+
+// Bytes from one element of field row j to the next
+dcl-proc fieldStride;
+  dcl-pi *n int(10);
+    flds likeds(fields_t) const;
+    j int(10) const;
+  end-pi;
+  if flds.def(j).type = '*DS';
+    return flds.def(j).len;
+  endif;
+  return imoq_byteSize(flds.def(j));
+end-proc;
+
+// Field row of a path (ITEMS.SKU) of a parameter; 0 if not declared
+dcl-proc fieldRow;
+  dcl-pi *n int(10);
+    flds likeds(fields_t) const;
+    parmNo int(10) const;
+    path varchar(64) const;
+  end-pi;
+  dcl-s j int(10);
+  for j = 1 to flds.n;
+    if flds.parm(j) = parmNo and flds.name(j) = path;
+      return j;
+    endif;
+  endfor;
+  return 0;
+end-proc;
+
+// Layout and byte offset of a field reference within its parameter.
+// where names the parameter in messages (' of X parameter 1').
+dcl-proc resolveField;
+  dcl-pi *n ind;
+    flds likeds(fields_t) const;
+    parmNo int(10) const;
+    field varchar(40) const;
+    def likeds(imoq_def_t);
+    offset int(10);
+    where varchar(200) const;
+    msg varchar(256);
+  end-pi;
+  dcl-s rest varchar(40);
+  dcl-s seg varchar(40);
+  dcl-s name varchar(30);
+  dcl-s idx int(10);
+  dcl-s path varchar(64);
+  dcl-s ref varchar(40);
+  dcl-s what varchar(300);
+  dcl-s j int(10);
+  dcl-s k int(10);
+  dcl-s p int(10);
+
+  clear def;
+  offset = 0;
+  msg = 'No field named';
+  if field = '';
+    return *off;
+  endif;
+  rest = field;
+  dow rest <> '';
+    p = %scan('.' : rest);
+    if p > 0;
+      seg = %subst(rest : 1 : p - 1);
+      rest = %subst(rest : p + 1);
+    else;
+      seg = rest;
+      rest = '';
+    endif;
+    splitField(seg : name : idx);
+    if path <> '';
+      path += '.';
+      ref += '.';
+    endif;
+    path += name;
+    ref += name;
+    what = 'Field ' + path + where;
+    j = fieldRow(flds : parmNo : path);
+    if j = 0;
+      msg = what + ' is not declared. Declare it with IMOQFIELD';
+      return *off;
+    endif;
+    if flds.dim(j) = 0 and idx > 0;
+      msg = what + ' is not an array; leave out (' + %char(idx) + ')';
+      return *off;
+    endif;
+    if flds.dim(j) > 0 and idx = 0;
+      msg = what + ' is an array of ' + %char(flds.dim(j))
+          + '; name an element, such as ' + ref + '(1)';
+      return *off;
+    endif;
+    if idx > flds.dim(j);
+      msg = what + ' has ' + %char(flds.dim(j)) + ' elements, not '
+          + %char(idx);
+      return *off;
+    endif;
+    if idx > 0;
+      ref += '(' + %char(idx) + ')';
+    else;
+      idx = 1;
+    endif;
+    offset += flds.pos(j) - 1 + (idx - 1) * fieldStride(flds : j);
+    if rest <> '' and flds.def(j).type <> '*DS';
+      msg = what + ' is not a data structure, so it has no field '
+          + rest;
+      return *off;
+    endif;
+  enddo;
+  if flds.def(j).type = '*DS';
+    msg = what + ' is a data structure. Name one of its fields';
+    for k = 1 to flds.n;
+      if flds.parm(k) = parmNo
+         and %len(flds.name(k)) > %len(path) + 1
+         and %subst(flds.name(k) : 1 : %len(path) + 1) = path + '.';
+        msg += ', such as ' + ref + '.' + lastSeg(flds.name(k));
+        leave;
+      endif;
+    endfor;
+    return *off;
+  endif;
+  def = flds.def(j);
+  return *on;
+end-proc;
+
+// Every element of field row j, with its reference and byte offset
+// in the parameter: QTY(1) ... QTY(n), and ITEMS(1).SKU ...
+// ITEMS(10).SKU for a field of an array of data structures. Returns
+// how many, at most max.
+dcl-proc fieldElems;
+  dcl-pi *n int(10);
+    flds likeds(fields_t) const;
+    j int(10) const;
+    keys varchar(40) dim(MAXFVALS);
+    offs int(10) dim(MAXFVALS);
+    max int(10) const;
+  end-pi;
+  dcl-s rows int(10) dim(MAXDEPTH);
+  dcl-s idx int(10) dim(MAXDEPTH);
+  dcl-s nR int(10);
+  dcl-s n int(10);
+  dcl-s k int(10);
+  dcl-s r int(10);
+  dcl-s p int(10);
+  dcl-s key varchar(40);
+  dcl-s off int(10);
+  dcl-s name varchar(30);
+
+  // the data structures the field is in, outermost first
+  name = flds.name(j);
+  p = %scan('.' : name);
+  dow p > 0 and nR < MAXDEPTH - 1;
+    r = fieldRow(flds : flds.parm(j) : %subst(name : 1 : p - 1));
+    if r = 0;
+      return 0;
+    endif;
+    nR += 1;
+    rows(nR) = r;
+    p = %scan('.' : name : p + 1);
+  enddo;
+  nR += 1;
+  rows(nR) = j;
+  for k = 1 to nR;
+    idx(k) = 1;
+  endfor;
+
+  dow n < max;
+    key = '';
+    off = 0;
+    for k = 1 to nR;
+      r = rows(k);
+      if key <> '';
+        key += '.';
+      endif;
+      key += lastSeg(flds.name(r));
+      if flds.dim(r) > 0;
+        key += '(' + %char(idx(k)) + ')';
+      endif;
+      off += flds.pos(r) - 1 + (idx(k) - 1) * fieldStride(flds : r);
+    endfor;
+    n += 1;
+    keys(n) = key;
+    offs(n) = off;
+    // the next element: the innermost index first
+    k = nR;
+    dow k > 0;
+      if idx(k) < flds.dim(rows(k));
+        idx(k) += 1;
+        leave;
+      endif;
+      idx(k) = 1;
+      k -= 1;
+    enddo;
+    if k = 0;
+      leave;
+    endif;
+  enddo;
+  return n;
 end-proc;
 
 // Layout and byte offset of a declared subfield (element)
@@ -911,55 +1155,16 @@ dcl-proc findField;
     offset int(10);
     err likeds(imoq_err_t);
   end-pi;
-  dcl-s name varchar(30);
-  dcl-s idx int(10);
-  dcl-s p5 int(5);
-  dcl-s pos int(10);
-  dcl-s type char(10);
-  dcl-s len int(10);
-  dcl-s dec int(10);
-  dcl-s dim int(10);
-  dcl-s what varchar(200);
+  dcl-ds flds likeds(fields_t);
+  dcl-s msg varchar(256);
 
-  clear def;
-  offset = 0;
-  splitField(field : name : idx);
-  p5 = parmNo;
-  what = 'Field ' + name + ' of ' + label(obj : proc) + ' parameter '
-       + %char(parmNo);
-  exec sql select pos, type, len, dec, dim
-             into :pos, :type, :len, :dec, :dim
-             from qtemp.imoq_fld
-            where obj = :obj and proc = :proc and parmno = :p5
-              and name = :name;
-  if sqlcode <> 0;
-    setErr(err : 'IMQ0014' : what + ' is not declared. Declare it with '
-         + 'IMOQFIELD');
+  loadFields(obj : proc : flds);
+  if not resolveField(flds : parmNo : field : def : offset
+                      : ' of ' + label(obj : proc) + ' parameter '
+                        + %char(parmNo) : msg);
+    setErr(err : 'IMQ0014' : msg);
     return *off;
   endif;
-  def.type = type;
-  def.len = len;
-  def.dec = dec;
-  def.passing = '*REF';
-  if dim = 0 and idx > 0;
-    setErr(err : 'IMQ0014' : what + ' is not an array; leave out (' +
-           %char(idx) + ')');
-    return *off;
-  endif;
-  if dim > 0 and idx = 0;
-    setErr(err : 'IMQ0014' : what + ' is an array of ' + %char(dim)
-         + '; name an element, such as ' + name + '(1)');
-    return *off;
-  endif;
-  if idx > dim;
-    setErr(err : 'IMQ0014' : what + ' has ' + %char(dim)
-         + ' elements, not ' + %char(idx));
-    return *off;
-  endif;
-  if idx = 0;
-    idx = 1;
-  endif;
-  offset = pos - 1 + (idx - 1) * imoq_byteSize(def);
   return *on;
 end-proc;
 
@@ -1656,6 +1861,15 @@ dcl-proc imoq_cl_defField export;
   dcl-s type char(10);
   dcl-s len int(10);
   dcl-s dec int(10);
+  // per entry: how deep in data structures it is, the
+  // longest reference to it, and for a *DS the next free position
+  dcl-s depth int(10) dim(64);
+  dcl-s refLen int(10) dim(64);
+  dcl-s nextIn int(10) dim(64);
+  dcl-s pj int(10);
+  dcl-s room int(10);
+  dcl-s dot int(10);
+  dcl-s inside varchar(80);
 
   clearErr(err);
   ensureTables();
@@ -1697,8 +1911,11 @@ dcl-proc imoq_cl_defField export;
     e = lstEntry(p : i);
     nm = %xlate(LOWER : UPPER : %trim(charAt(e + 2 : 30)));
     what = 'FIELDS entry ' + %char(i) + ' (' + nm + ')';
-    if nm = '' or %check(NAMECHARS : nm) > 0;
-      setErr(err : 'IMQ0014' : what + ': not a valid field name');
+    if nm = '' or %check(NAMECHARS + '.' : nm) > 0
+       or %subst(nm : 1 : 1) = '.' or %subst(nm : %len(nm) : 1) = '.'
+       or %scan('..' : nm) > 0;
+      setErr(err : 'IMQ0014' : what + ': not a valid field name. Use '
+           + 'NAME, or DS.NAME for a field of data structure DS');
       return;
     endif;
     for j = 1 to i - 1;
@@ -1707,6 +1924,25 @@ dcl-proc imoq_cl_defField export;
         return;
       endif;
     endfor;
+
+    // DS.NAME: DS must be a *DS entry before this one
+    pj = 0;
+    dot = %scanr('.' : nm);
+    if dot > 0;
+      for j = 1 to i - 1;
+        if names(j) = %subst(nm : 1 : dot - 1);
+          pj = j;
+          leave;
+        endif;
+      endfor;
+      if pj = 0 or fd(pj).type <> '*DS';
+        setErr(err : 'IMQ0014' : what + ': declare '
+             + %subst(nm : 1 : dot - 1) + ' as a *DS field before '
+             + 'the fields in it');
+        return;
+      endif;
+    endif;
+
     pos = int4At(e + 32);
     clear fd(i);
     fd(i).type = %xlate(LOWER : UPPER : charAt(e + 36 : 10));
@@ -1714,32 +1950,82 @@ dcl-proc imoq_cl_defField export;
     fd(i).dec = int4At(e + 50);
     fd(i).passing = '*REF';
     dim = int4At(e + 54);
-    if not imoq_normDef(fd(i) : m256);
+    if fd(i).type = '*DS';
+      // a data structure field: the length is one element's size
+      if fd(i).len < 1;
+        setErr(err : 'IMQ0014' : what + ': *DS needs the size of one '
+             + 'element in bytes, such as (' + nm + ' 1 *DS 13)');
+        return;
+      endif;
+      fd(i).dec = 0;
+      size = fd(i).len;
+    elseif not imoq_normDef(fd(i) : m256);
       setErr(err : 'IMQ0014' : what + ': ' + m256);
       return;
+    else;
+      size = imoq_byteSize(fd(i));
     endif;
     if dim < 0 or dim > 999;
       setErr(err : 'IMQ0014' : what + ': DIM must be 0 to 999');
       return;
     endif;
-    if pos = 0;
-      pos = nextPos;
+
+    // positions count from 1 within the data structure the field is
+    // in, or within the parameter
+    if pj = 0;
+      room = parentSize;
+      inside = place;
+      if pos = 0;
+        pos = nextPos;
+      endif;
+    else;
+      room = fd(pj).len;
+      inside = 'data structure ' + names(pj);
+      if pos = 0;
+        pos = nextIn(pj);
+      endif;
     endif;
-    size = imoq_byteSize(fd(i));
     last = pos - 1 + size;
     if dim > 0;
       last = pos - 1 + size * dim;
     endif;
-    if pos < 1 or last > parentSize;
+    if pos < 1 or last > room;
       setErr(err : 'IMQ0014' : what + ': positions ' + %char(pos) + ' to '
-           + %char(last) + ' don''t fit in ' + place + ', which is '
-           + %char(parentSize) + ' bytes');
+           + %char(last) + ' don''t fit in ' + inside + ', which is '
+           + %char(room) + ' bytes');
       return;
     endif;
+
+    depth(i) = 1;
+    refLen(i) = %len(nm) - dot;
+    if pj > 0;
+      depth(i) = depth(pj) + 1;
+      refLen(i) += refLen(pj) + 1;
+    endif;
+    if dim > 0;
+      refLen(i) += %len(%char(dim)) + 2;
+    endif;
+    if depth(i) > MAXDEPTH;
+      setErr(err : 'IMQ0014' : what + ': data structures can be nested '
+           + %char(MAXDEPTH) + ' deep');
+      return;
+    endif;
+    if refLen(i) > 40;
+      setErr(err : 'IMQ0014' : what + ': a reference to it, with array '
+           + 'elements, can be ' + %char(refLen(i)) + ' characters. '
+           + 'Use shorter names: references are at most 40');
+      return;
+    endif;
+
     names(i) = nm;
     poss(i) = pos;
     dims(i) = dim;
-    nextPos = last + 1;
+    nextIn(i) = 1;
+    if pj = 0;
+      nextPos = last + 1;
+    else;
+      nextIn(pj) = last + 1;
+    endif;
   endfor;
 
   // replace the parameter's fields
@@ -3243,10 +3529,11 @@ dcl-proc imoq_invoke export;
   dcl-s xKey varchar(40) dim(MAXFVALS);
   dcl-s xVal varchar(1024) dim(MAXFVALS);
   dcl-s xF int(10) dim(MAXFVALS);
+  dcl-s eKeys varchar(40) dim(MAXFVALS);
+  dcl-s eOffs int(10) dim(MAXFVALS);
   dcl-s j int(10);
   dcl-s e int(10);
   dcl-s nE int(10);
-  dcl-s size int(10);
   dcl-s fld varchar(40);
   dcl-ds fd likeds(imoq_def_t);
   dcl-s off int(10);
@@ -3305,27 +3592,17 @@ dcl-proc imoq_invoke export;
     loadFields(obj : proc : flds);
     for j = 1 to flds.n;
       i = flds.parm(j);
-      if i < 1 or i > nPassed or i > nDefs or st(i) <> 'P';
+      if i < 1 or i > nPassed or i > nDefs or st(i) <> 'P'
+         or flds.def(j).type = '*DS';
         iter;
       endif;
-      size = imoq_byteSize(flds.def(j));
-      nE = flds.dim(j);
-      if nE = 0;
-        nE = 1;
-      endif;
+      nE = fieldElems(flds : j : eKeys : eOffs : MAXFVALS - nX);
       for e = 1 to nE;
-        if nX >= MAXFVALS;
-          leave;
-        endif;
         nX += 1;
         xParm(nX) = i;
         xF(nX) = j;
-        xKey(nX) = flds.name(j);
-        if flds.dim(j) > 0;
-          xKey(nX) += '(' + %char(e) + ')';
-        endif;
-        xVal(nX) = imoq_decode(ptrs(i) + flds.pos(j) - 1 + (e - 1) * size
-                               : flds.def(j));
+        xKey(nX) = eKeys(e);
+        xVal(nX) = imoq_decode(ptrs(i) + eOffs(e) : flds.def(j));
       endfor;
     endfor;
 
@@ -3764,24 +4041,8 @@ dcl-proc fieldAt;
     def likeds(imoq_def_t);
     offset int(10);
   end-pi;
-  dcl-s name varchar(30);
-  dcl-s idx int(10);
-  dcl-s j int(10);
-  splitField(field : name : idx);
-  if idx = 0;
-    idx = 1;
-  endif;
-  for j = 1 to flds.n;
-    if flds.parm(j) = parmNo and flds.name(j) = name;
-      if flds.dim(j) > 0 and idx > flds.dim(j);
-        return *off;
-      endif;
-      def = flds.def(j);
-      offset = flds.pos(j) - 1 + (idx - 1) * imoq_byteSize(def);
-      return *on;
-    endif;
-  endfor;
-  return *off;
+  dcl-s msg varchar(256);
+  return resolveField(flds : parmNo : field : def : offset : '' : msg);
 end-proc;
 
 // Blank a data structure return value, then zero its numeric and
@@ -3799,9 +4060,10 @@ dcl-proc clearReturn;
   dcl-s j int(10);
   dcl-s e int(10);
   dcl-s nE int(10);
-  dcl-s size int(10);
   dcl-s zero varchar(32);
   dcl-s m256 varchar(256);
+  dcl-s eKeys varchar(40) dim(MAXFVALS);
+  dcl-s eOffs int(10) dim(MAXFVALS);
 
   q = rtnPtr;
   left = imoq_byteSize(rtnDef);
@@ -3837,14 +4099,9 @@ dcl-proc clearReturn;
     other;
       iter;
     endsl;
-    size = imoq_byteSize(flds.def(j));
-    nE = flds.dim(j);
-    if nE = 0;
-      nE = 1;
-    endif;
+    nE = fieldElems(flds : j : eKeys : eOffs : MAXFVALS);
     for e = 1 to nE;
-      imoq_encode(rtnPtr + flds.pos(j) - 1 + (e - 1) * size
-                  : flds.def(j) : zero : m256);
+      imoq_encode(rtnPtr + eOffs(e) : flds.def(j) : zero : m256);
     endfor;
   endfor;
 end-proc;

@@ -96,7 +96,7 @@ needs.
 | `EXPRICE` | `*SRVPGM` | Pricing service | `EX_PRICE(item char(5) const) packed(7:2)`<br>`EX_DISCOUNT(amount packed(7:2) const : code char(10) const options(*nopass:*omit)) packed(7:2)`<br>`EX_LOG(text char(50) const)`<br>`EX_SCHEDULE` and `EX_CUTOFF` (`EXAPI` only: time, timestamp and date parameters) |
 | `EXCALC` | `*SRVPGM` | Calculator (`EXVALUE`) | `EX_ROUND(amount packed(9:2) value : places int(10) value) packed(9:2)`<br>`EX_INITIALS(name varchar(30) value : note varchar(70000:4) value) char(3)` |
 | `EXPROF` | `*PGM` | Customer profile (`EXTYPES`) | `name varchar(30)`, `balance zoned(9:2)`, `rate float(8)`, `note pointer` |
-| `EXORDER` | `*SRVPGM` | Order entry (`EXFIELD`) | `EX_ADDORDER(order likeds(order_t) const : monthly packed(9:2) dim(12) const) likeds(result_t)`<br>`EX_PRICEIT(order likeds(order_t))` |
+| `EXORDER` | `*SRVPGM` | Order entry (`EXFIELD`) | `EX_ADDORDER(order likeds(order_t) const : monthly packed(9:2) dim(12) const) likeds(result_t)`<br>`EX_PRICEIT(order likeds(order_t))`<br>`EX_SHIP(shipment likeds(shipment_t)) packed(7:2)` |
 
 Each example declares the prototypes it calls (`getCustomer`, `writeAudit`,
 `getPrice`, `getDiscount` or `logMessage`) at its top, so everything an example
@@ -546,6 +546,24 @@ imoq_with(h : 2 : IMOQ_EQ : 0 : 'AMT(1)');
 imoq_setParm(h : 0 : 12.50 : 'TOTAL');
 ```
 
+Data structures inside data structures, from `nested()`:
+
+```
+IMOQFIELD  OBJ(EXORDER) PROC(EX_SHIP) PARM(1) +
+             FIELDS((ID 1 *CHAR 5) (DEST *NEXT *DS 30) +
+                    (DEST.CITY 1 *CHAR 20) (DEST.ZIP *NEXT *CHAR 10) +
+                    (LINES *NEXT *DS 8 0 3) +
+                    (LINES.SKU 1 *CHAR 5) (LINES.QTY *NEXT *PACKED 5 0))
+```
+
+```rpgle
+imoq('IMOQWHEN OBJ(EXORDER) PROC(EX_SHIP) +
+      ARGS((1 *EQ ''Paris'' DEST.CITY) (1 *GT 5 ''LINES(2).QTY'')) +
+      SETPARM((1 X9 ''LINES(3).SKU'')) RETURN(''12.50'')');
+...
+expect(imoq_arg('EXORDER' : 'EX_SHIP' : 1 : 1 : 'LINES(2).QTY') = '6' : ...);
+```
+
 What to notice:
 - **A data structure or array is one `*CHAR`,** and `IMOQFIELD` describes
   its subfields: name, position (or `*NEXT`), type and length, and a number
@@ -558,7 +576,10 @@ What to notice:
 - **Parameter 0 is the return value.** `SETPARM` on its fields builds the
   returned data structure; fields you don't set come back blank or zero.
 - **`SETPARM` on an output data structure changes only that subfield.**
-
+- **A data structure inside one is a `*DS` field** with the size of one
+  element, and an element count for an array of them. Its fields are
+  `DS.NAME`, positioned from 1 within each element, and a reference names
+  the path: `DEST.CITY`, `LINES(2).QTY`.
 ### EXANSWER: answers built from the arguments
 
 Test program [`EXANSWER_T`](../examples/QRPGLESRC/EXANSWER_T.rpgle), answer

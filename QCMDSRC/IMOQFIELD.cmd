@@ -9,15 +9,16 @@
                           PROMPT('Parameter (0 = return value)')
              PARM       KWD(FIELDS) TYPE(FDEF) MIN(1) MAX(64) +
                           PROMPT('Fields')
- FDEF:       ELEM       TYPE(*NAME) LEN(30) MIN(1) +
-                          PROMPT('Field name')
+ FDEF:       ELEM       TYPE(*CHAR) LEN(30) MIN(1) +
+                          PROMPT('Field name, or DS.NAME')
              ELEM       TYPE(*INT4) DFT(*NEXT) RANGE(1 16000000) +
                           SPCVAL((*NEXT 0)) PROMPT('Position')
              ELEM       TYPE(*CHAR) LEN(10) RSTD(*YES) DFT(*CHAR) +
                           VALUES(*CHAR *VARCHAR *PACKED *ZONED *INT +
                           *UNS *FLOAT *IND *DATE *TIME *TIMESTAMP +
-                          *PTR) PROMPT('Type')
-             ELEM       TYPE(*INT4) DFT(0) PROMPT('Length or digits')
+                          *PTR *DS) PROMPT('Type')
+             ELEM       TYPE(*INT4) DFT(0) +
+                          PROMPT('Length, digits or *DS size')
              ELEM       TYPE(*INT4) DFT(0) PROMPT('Decimal positions')
              ELEM       TYPE(*INT4) DFT(0) RANGE(0 999) +
                           PROMPT('Array elements (0 = none)')

@@ -348,7 +348,7 @@ IMOQFIELD  OBJ(ORDSRV) PROC(ADD_ORDER) PARM(0) +
              FIELDS((STATUS 1 *CHAR 2) (TOTAL *NEXT *PACKED 11 2))
 ```
 
-- **Each field is `(name position type length decimals [elements])`.** The position is 1-based, like RPG's `POS()`, and `*NEXT` means right after the previous field. The type and length are written as in `PARMS`.
+- **Each field is `(name position type length decimals [elements])`.** The position is 1-based, like RPG's `POS()`, and `*NEXT` means right after the previous field. The type and length are written as in `PARMS`, or `*DS` for a [data structure inside it](#data-structures-inside-data-structures).
 - **An array is a field with a number of elements:** `(AMT 1 *PACKED 9 2 12)` is `packed(9:2) dim(12)`. An array parameter that isn't in a data structure is one `(*CHAR size)` with a single array field.
 - **Parameter 0 is the return value**, for a procedure that returns a data structure. Declare its `RTNTYPE` as `(*CHAR size)`.
 - **Program mocks** take `IMOQFIELD` without `PROC`.
@@ -371,6 +371,36 @@ imoq_with(h : 2 : IMOQ_GT : 1000 : 'AMT(12)');
 imoq_setParm(h : 0 : 99.50 : 'TOTAL');
 qty = imoq_argNum('ORDSRV' : 'ADD_ORDER' : 1 : 1 : 'QTY');
 ```
+
+#### Data structures inside data structures
+
+A subfield that is a data structure itself, such as `likeds(addr_t)` or an array `likeds(line_t) dim(10)`, is a `*DS` field. Its length is the size of one element, and the fields in it are named `DS.NAME`, with positions counted from 1 within each element:
+
+```rpgle
+dcl-ds shipment_t qualified template;
+  id char(5);                       // 1-5
+  dest likeds(addr_t);              // 6-35: city char(20), zip char(10)
+  lines likeds(line_t) dim(3);      // 36-59: sku char(5), qty packed(5:0)
+end-ds;
+```
+
+```
+IMOQFIELD  OBJ(ORDSRV) PROC(SHIP) PARM(1) +
+             FIELDS((ID 1 *CHAR 5) +
+                    (DEST *NEXT *DS 30) +
+                    (DEST.CITY 1 *CHAR 20) (DEST.ZIP *NEXT *CHAR 10) +
+                    (LINES *NEXT *DS 8 0 3) +
+                    (LINES.SKU 1 *CHAR 5) (LINES.QTY *NEXT *PACKED 5 0))
+
+IMOQWHEN   OBJ(ORDSRV) PROC(SHIP) +
+             ARGS((1 *EQ 'Paris' DEST.CITY) (1 *GT 5 'LINES(2).QTY')) +
+             SETPARM((1 X9 'LINES(3).SKU'))
+```
+
+- **Declare a `*DS` before the fields in it.** `*NEXT` inside it follows the previous field of the same data structure; after its fields, `*NEXT` continues after the whole `*DS` (all its elements).
+- **A reference names the path,** with an element number at every array: `DEST.CITY`, `LINES(2).QTY`, `BOX(1).ITEM(3).SKU`. Data structures nest up to 8 deep.
+- **A `*DS` itself isn't a value.** Match, set and capture the fields in it.
+- **Names and references have limits:** a declared name, with its data structures, is at most 30 characters (`LINES.QTY`), and a reference with its element numbers at most 40 (`LINES(10).QTY`). `IMOQFIELD` checks both.
 
 Things to know:
 - **Every subfield is compared by its own type,** so packed and zoned subfields compare as numbers, and dates as dates.
@@ -826,7 +856,6 @@ To test that code, call it directly from the driver job.
 
 ### Parameters that can't be described exactly
 
-- **Arrays of data structures** (`likeds(x) dim(n)`) and data structures nested inside data structures can't be described with `IMOQFIELD`, which only repeats a single field. Declare the elements you need as separate fields at their own positions.
 - **Aligned data structures:** iMoq uses the positions you declare and doesn't add `ALIGN` padding.
 - **Sizes:** up to 64 parameters, command values of at most 256 characters (1,024 through the RPG API), and captured values cut at 1,024 characters. See [Limits](#limits) for the full list.
 
@@ -849,7 +878,7 @@ The mock is identified by `OBJ(name)`. Service program mocks also take `PROC(exp
 | `IMOQPGM` | `OBJ` · `PARMS((type len dec) …)` · `BEHAVIOR(*LOOSE\|*STRICT)` · `LIB(QTEMP\|name)` | `mock(X.class)` / `new Mock<X>(behavior)` |
 | `IMOQSRVPGM` | `OBJ` · `BEHAVIOR` · `SRCFILE(*NONE\|*RTV\|lib/file)` · `SRCMBR(*OBJ\|name)` · `SIGNATURE(*GEN\|'text')` · `LIB(QTEMP\|name)` | `mock(X.class)` |
 | `IMOQPROC` | `OBJ` · `PROC` · `RTNTYPE(type len dec)` · `PARMS((type len dec\|passing [passing]) …)` | – |
-| `IMOQFIELD` | `OBJ` · `PROC` · `PARM(n\|0)` · `FIELDS((name pos\|*NEXT type len dec [elements]) …)` | – |
+| `IMOQFIELD` | `OBJ` · `PROC` · `PARM(n\|0)` · `FIELDS((name\|DS.name pos\|*NEXT type\|*DS len dec [elements]) …)` | – |
 | `IMOQBUILD` | `OBJ` | – |
 | `IMOQWHEN` | `OBJ` · `PROC(*PGM\|name)` · `ARGS((n matcher value [field] [group]) …)` · `RETURN(v …)` · `SETPARM((n value [field]) …)` · `COPYARG((from to [fromField] [toField]) …)` · `THROW(msgid msgf lib data)` · `ANSWER(lib/obj [proc])` · `TIMES(*ALWAYS\|n)` | `when().thenReturn()/thenThrow()/thenAnswer()` / `Setup().Returns()/Callback()/Throws()` |
 | `IMOQVERIFY` | `OBJ` · `PROC` · `ARGS` · `TIMES(*ONCE\|*NEVER\|*EXACTLY n\|*ATLEAST n\|*ATMOST n)` | `verify(m, times(n))` / `Verify(Times)` |
@@ -879,7 +908,7 @@ From RPG, the same stubbing and verification is available as the [RPG API](#8-wr
 ### Limits
 
 - Up to 64 parameters per program or procedure, 64 `ARGS`/`SETPARM`/`COPYARG` entries, 64 OR groups and 32 `RETURN` values. Up to 500 stubs at a time can have an answer procedure from `imoq_answers`. Command values are at most 256 characters; RPG API values up to 1,024.
-- Up to 64 fields per parameter, 999 elements per array field and 256 fields per procedure. Up to 2,000 subfield values are recorded per call.
+- Up to 64 fields per parameter, 999 elements per array field, data structures nested 8 deep and 256 fields per procedure. Field names are at most 30 characters with their data structures, and references at most 40 with their element numbers. Up to 2,000 subfield values are recorded per call.
 - Captured argument text is cut at 1,024 characters. Dates and times use ISO format.
 - A data export is mocked as `char(n)` storage of the real size.
 - Each stub call runs a few SQL statements against QTEMP. That's fast enough for unit tests, but mocks aren't meant for performance runs.

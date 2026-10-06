@@ -279,5 +279,16 @@ dcl-proc test_parseField;
   tst_check(not imoq_parseField('(1)' : f : msg) : 'no name');
   tst_check(not imoq_parseField('A-B' : f : msg) : 'bad character');
   tst_check(not imoq_parseField('2.QTY' : f : msg) : 'parameter prefix');
+  tst_check(imoq_parseField('ship.city' : f : msg) and f = 'SHIP.CITY'
+          : 'data structure path: ' + f);
+  tst_check(imoq_parseField(' lines( 02 ) . qty ' : f : msg)
+            and f = 'LINES(2).QTY' : 'array of data structures: ' + f);
+  tst_check(imoq_parseField('BOX(1).ITEM(3).SKU' : f : msg)
+            and f = 'BOX(1).ITEM(3).SKU' : 'two levels: ' + f);
+  tst_check(not imoq_parseField('SHIP.' : f : msg) : 'trailing dot');
+  tst_check(not imoq_parseField('.CITY' : f : msg) : 'leading dot');
+  tst_check(not imoq_parseField('SHIP..CITY' : f : msg) : 'empty part');
+  tst_check(not imoq_parseField('ABCDEFGHIJKLMNOPQRST.ABCDEFGHIJKLMNOPQRST'
+                                : f : msg) : 'over 40 characters');
   tst_end();
 end-proc;

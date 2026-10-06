@@ -18,9 +18,23 @@ ctl-opt main(runTests) option(*srcstmt:*nodebugio);
 //   SETQTY(item char(5) const : qty int(10))
 //   SCALE(amount packed(7:2) const : result packed(9:2))
 //     returns packed(7:2)
+//   NEST(boxes likeds(boxes_t)): data structures in data structures
 dcl-c LOOSE 'IMQTSRV';
 dcl-c STRICT 'IMQTSTR';
 dcl-c LAST -1;
+
+// NEST's parameter: 2 boxes of 20 bytes, each with a tag and 3 items
+dcl-ds item_t qualified template;
+  sku char(4);
+  qty int(5);
+end-ds;
+dcl-ds box_t qualified template;
+  tag char(2);
+  item likeds(item_t) dim(3);
+end-ds;
+dcl-ds boxes_t qualified template;
+  box likeds(box_t) dim(2);
+end-ds;
 
 // Escape message the last simulated call sent, blank if none
 dcl-s gThrown char(7);
@@ -46,6 +60,7 @@ dcl-proc runTests;
     test_strict();
     test_throw();
     test_setParm();
+    test_nestedFields();
     test_copyArg();
     test_copyRejected();
     test_answerProc();
@@ -150,6 +165,18 @@ dcl-proc setQty;
   return q;
 end-proc;
 
+// Call NEST of the loose mock
+dcl-proc nest;
+  dcl-pi *n;
+    boxes likeds(boxes_t);
+  end-pi;
+  dcl-s ptrs pointer dim(64);
+  dcl-ds thr likeds(imoq_throw_t);
+  ptrs(1) = %addr(boxes);
+  imoq_invoke(LOOSE : 'NEST' : 1 : %addr(ptrs) : *null : thr);
+  gThrown = thr.msgId;
+end-proc;
+
 dcl-proc setup;
   dcl-pi *n ind;
   end-pi;
@@ -170,6 +197,7 @@ dcl-proc setup;
          PARMS((*CHAR 5 *CONST) (*INT 10))');
     cmd('IMOQPROC OBJ(' + o + ') PROC(SCALE) RTNTYPE(*PACKED 7 2) +
          PARMS((*PACKED 7 2 *CONST) (*PACKED 9 2))');
+    cmd('IMOQPROC OBJ(' + o + ') PROC(NEST) PARMS((*CHAR 40))');
   endfor;
   tst_end();
   return not tst_bad;
@@ -285,6 +313,88 @@ dcl-proc test_orGroups;
            ARGS((1 *NE C0003) (1 *EQ Z9999 *N 1) (1 *EQ Y8888 *N 2))'
           : 'with (1 *NE ''C0003'', (1 *EQ ''Z9999'') or +
              (1 *EQ ''Y8888''))');
+  on-error;
+    tst_error(imoq_lastError());
+  endmon;
+  tst_end();
+end-proc;
+
+dcl-proc test_nestedFields;
+  dcl-ds b likeds(boxes_t) inz(*likeds);
+  tst_begin('*DS fields: arrays of data structures, nested');
+  monitor;
+    cmd('IMOQRESET');
+    cmd('IMOQFIELD OBJ(IMQTSRV) PROC(NEST) PARM(1) +
+         FIELDS((BOX 1 *DS 20 0 2) (BOX.TAG 1 *CHAR 2) +
+                (BOX.ITEM *NEXT *DS 6 0 3) (BOX.ITEM.SKU 1 *CHAR 4) +
+                (BOX.ITEM.QTY *NEXT *INT 5))');
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(NEST) +
+         ARGS((1 *EQ 7 ''BOX(1).ITEM(2).QTY'') +
+              (1 *EQ B2 ''BOX(2).TAG'')) +
+         SETPARM((1 ZZ ''BOX(2).ITEM(3).SKU'') +
+                 (1 9 ''box(1).item(1).qty''))');
+
+    b.box(1).item(2).qty = 7;
+    b.box(2).tag = 'B2';
+    nest(b);
+    tst_eqChar('ZZ' : b.box(2).item(3).sku : 'BOX(2).ITEM(3).SKU set');
+    tst_eqNum(9 : b.box(1).item(1).qty : 'BOX(1).ITEM(1).QTY set');
+    tst_eqChar(' ' : b.box(1).item(3).sku : 'other elements untouched');
+    tst_eqNum(7 : b.box(1).item(2).qty : 'matched field untouched');
+
+    clear b;
+    b.box(1).item(2).qty = 7;
+    nest(b);
+    tst_eqChar(' ' : b.box(2).item(3).sku : 'BOX(2).TAG differs');
+
+    tst_eqChar('7' : imoq_arg(LOOSE : 'NEST' : 1 : 1 : 'BOX(1).ITEM(2).QTY')
+               : 'captured BOX(1).ITEM(2).QTY');
+    tst_eqChar('' : imoq_arg(LOOSE : 'NEST' : 1 : 1
+                             : 'BOX(2).ITEM(3).SKU')
+               : 'values are captured as they arrived, before SETPARM');
+    cmd('IMOQVERIFY OBJ(IMQTSRV) PROC(NEST) +
+         ARGS((1 *EQ B2 ''BOX(2).TAG'')) TIMES(*ONCE)');
+
+    // references that name no value
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(NEST) ARGS((1 *EQ X ''BOX(1)''))'
+          : 'is a data structure. Name one of its fields, such as BOX(1).TAG');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(NEST) +
+           ARGS((1 *EQ X ''BOX(1).ITEM(1)''))' : 'such as BOX(1).ITEM(1).SKU');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(NEST) +
+           ARGS((1 *EQ X ''BOX(1).TAG.X''))' : 'is not a data structure');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(NEST) ARGS((1 *EQ X BOX.TAG))'
+          : 'name an element, such as BOX(1)');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(NEST) +
+           ARGS((1 *EQ X ''BOX(3).TAG''))' : 'has 2 elements, not 3');
+    fails('IMOQWHEN OBJ(IMQTSRV) PROC(NEST) +
+           ARGS((1 *EQ X ''BOX(1).NOPE''))' : 'Field BOX.NOPE');
+
+    // declarations that don't fit
+    fails('IMOQFIELD OBJ(IMQTSRV) PROC(NEST) PARM(1) +
+           FIELDS((X.A 1 *CHAR 1))' : 'declare X as a *DS field');
+    fails('IMOQFIELD OBJ(IMQTSRV) PROC(NEST) PARM(1) +
+           FIELDS((X 1 *CHAR 4) (X.A 1 *CHAR 1))' : 'declare X as a *DS');
+    fails('IMOQFIELD OBJ(IMQTSRV) PROC(NEST) PARM(1) +
+           FIELDS((X 1 *DS 4) (X.A 1 *CHAR 5))'
+          : 'don''t fit in data structure X, which is 4 bytes');
+    fails('IMOQFIELD OBJ(IMQTSRV) PROC(NEST) PARM(1) +
+           FIELDS((X 1 *DS 10 0 5))' : 'don''t fit in');
+    fails('IMOQFIELD OBJ(IMQTSRV) PROC(NEST) PARM(1) FIELDS((X 1 *DS))'
+          : 'size of one element');
+    fails('IMOQFIELD OBJ(IMQTSRV) PROC(NEST) PARM(1) +
+           FIELDS((X 1 *DS 40) (X.A 1 *CHAR 1) (X.A 2 *CHAR 1))'
+          : 'declared twice');
+    // AA(40).B(1).C(1).D(1).E(1).F(1).G(1).H(1) is 41 characters
+    fails('IMOQFIELD OBJ(IMQTSRV) PROC(NEST) PARM(1) +
+           FIELDS((AA 1 *DS 1 0 40) (AA.B 1 *DS 1 0 1) +
+                  (AA.B.C 1 *DS 1 0 1) (AA.B.C.D 1 *DS 1 0 1) +
+                  (AA.B.C.D.E 1 *DS 1 0 1) (AA.B.C.D.E.F 1 *DS 1 0 1) +
+                  (AA.B.C.D.E.F.G 1 *DS 1 0 1) +
+                  (AA.B.C.D.E.F.G.H 1 *CHAR 1 0 1))'
+          : 'references are at most 40');
+    // the failed declarations left the fields alone
+    tst_eqChar('B2' : imoq_arg(LOOSE : 'NEST' : 1 : 1 : 'BOX(2).TAG')
+               : 'fields still declared');
   on-error;
     tst_error(imoq_lastError());
   endmon;

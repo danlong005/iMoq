@@ -3,9 +3,11 @@
 // EXFIELD_T - Data structures, arrays and data structure returns
 //
 // Features: subfields declared with IMOQFIELD, used in ARGS,
-// SETPARM, IMOQVERIFY and imoq_arg; array elements (AMT(12)); and a
-// data structure return value built field by field (parameter 0).
-// withCommands() uses the commands, withApi() the RPG API.
+// SETPARM, IMOQVERIFY and imoq_arg; array elements (AMT(12)); a
+// data structure return value built field by field (parameter 0);
+// and data structures inside data structures (DEST.CITY,
+// LINES(2).QTY). withCommands() uses the commands, withApi() the RPG
+// API, nested() both.
 // Run it with the driver EXFIELD.
 // ------------------------------------------------------------------
 ctl-opt main(main);
@@ -17,6 +19,24 @@ dcl-ds order_t qualified template;
   qty packed(7:0);                  // 6-9
   price zoned(9:2);                 // 10-18
   shipped date(*iso);               // 19-28
+end-ds;
+
+// A shipment: a data structure and an array of data structures in
+// a data structure
+dcl-ds addr_t qualified template;
+  city char(20);                    // 1-20 of the address
+  zip char(10);                     // 21-30
+end-ds;
+
+dcl-ds line_t qualified template;
+  sku char(5);                      // 1-5 of each line
+  qty packed(5:0);                  // 6-8
+end-ds;
+
+dcl-ds shipment_t qualified template;
+  id char(5);                       // 1-5
+  dest likeds(addr_t);              // 6-35
+  lines likeds(line_t) dim(3);      // 36-59, 8 bytes each
 end-ds;
 
 dcl-ds result_t qualified template;
@@ -39,11 +59,17 @@ dcl-pr priceIt extproc('EX_PRICEIT');
   order likeds(order_t);
 end-pr;
 
+// EXORDER (*SRVPGM), procedure EX_SHIP: shipping cost of a shipment
+dcl-pr ship packed(7:2) extproc('EX_SHIP');
+  shipment likeds(shipment_t);
+end-pr;
+
 /copy QRPGLESRC,EXAMPLE_H
 
 dcl-proc main;
   withCommands();
   withApi();
+  nested();
 end-proc;
 
 // ------------------------------------------------------------------
@@ -149,4 +175,49 @@ dcl-proc withApi;
          = d'2026-11-05' : 'API: typed capture of a date subfield');
   expect(imoq_argNum('EXORDER' : 'EX_ADDORDER' : 1 : 2 : 'AMT(12)') = 0
          : 'API: typed capture of an array element');
+end-proc;
+
+// ------------------------------------------------------------------
+// Data structures in data structures: a reference names the path,
+// with an element number where there is an array
+// ------------------------------------------------------------------
+dcl-proc nested;
+  dcl-ds shp likeds(shipment_t) inz(*likeds);
+  dcl-s h int(10);
+  dcl-s v int(10);
+
+  imoq_reset();
+  imoq('IMOQWHEN OBJ(EXORDER) PROC(EX_SHIP) +
+        ARGS((1 *EQ ''Paris'' DEST.CITY) (1 *GT 5 ''LINES(2).QTY'')) +
+        SETPARM((1 X9 ''LINES(3).SKU'')) RETURN(''12.50'')');
+  h = imoq_when('EXORDER' : 'EX_SHIP');
+  imoq_with(h : 1 : IMOQ_EQ : 'Lyon' : 'DEST.CITY');
+  imoq_returns(h : 3);
+
+  shp.dest.city = 'Paris';
+  shp.lines(2).qty = 6;
+  expect(ship(shp) = 12.50 : 'DEST.CITY and LINES(2).QTY matched');
+  expect(shp.lines(3).sku = 'X9' and shp.lines(2).sku = ' '
+         : 'LINES(3).SKU set, LINES(2).SKU left alone');
+
+  shp.lines(2).qty = 1;
+  expect(ship(shp) = 0 : 'LINES(2).QTY 1 is not over 5');
+
+  shp.dest.city = 'Lyon';
+  expect(ship(shp) = 3 : 'API: DEST.CITY matched');
+
+  v = imoq_verify('EXORDER' : 'EX_SHIP');
+  imoq_with(v : 1 : IMOQ_EQ : 'Paris' : 'DEST.CITY');
+  expect(imoq_calledTimes(v : 2) : imoq_lastError());
+  expect(imoq_arg('EXORDER' : 'EX_SHIP' : 1 : 1 : 'LINES(2).QTY') = '6'
+         : 'captured LINES(2).QTY');
+  expect(imoq_arg('EXORDER' : 'EX_SHIP' : IMOQ_LAST : 1 : 'dest.city')
+         = 'Lyon' : 'captured DEST.CITY, named in lowercase');
+
+  // A data structure itself isn't a value: name one of its fields
+  expect(not imoq_ok('IMOQWHEN OBJ(EXORDER) PROC(EX_SHIP) +
+                      ARGS((1 *EQ X ''LINES(1)''))')
+         : 'a data structure field rejected');
+  expect(%scan('such as LINES(1).SKU' : imoq_lastError()) > 0
+         : 'imoq_lastError() names a field: ' + imoq_lastError());
 end-proc;
