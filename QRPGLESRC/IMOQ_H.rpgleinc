@@ -27,9 +27,11 @@ end-pr;
 dcl-pr imoq_lastError varchar(512) extproc('IMOQ_LASTERROR') end-pr;
 
 // Captured argument as text: callNo 1..n or IMOQ_LAST, parmNo 1..64,
-// field a subfield declared with IMOQFIELD (NAME, or NAME(i)).
-// Returns *OMIT / *NOTPASSED for missing arguments.
-dcl-pr imoq_arg varchar(1024) extproc('IMOQ_ARG');
+// field a subfield declared with IMOQFIELD (NAME, NAME(i), or
+// DS.NAME). Returns *OMIT / *NOTPASSED for missing arguments. A whole
+// parameter comes back up to 32,000 characters, a subfield up to
+// 1,024.
+dcl-pr imoq_arg varchar(32000) extproc('IMOQ_ARG');
   obj char(10) const;
   proc varchar(4096) const;
   callNo int(10) const;
@@ -273,7 +275,7 @@ end-pr;
 // *NOTPASSED for missing ones; the typed getters send IMQ0300.
 // A failure in an answer procedure makes the mock end the call with
 // escape message IMQ0102.
-dcl-pr imoq_answerArg varchar(1024) extproc('IMOQ_ANSWERARG');
+dcl-pr imoq_answerArg varchar(32000) extproc('IMOQ_ANSWERARG');
   parmNo int(10) const;
   field varchar(40) const options(*nopass);
 end-pr;

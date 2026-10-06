@@ -19,6 +19,7 @@ ctl-opt main(runTests) option(*srcstmt:*nodebugio);
 //   SCALE(amount packed(7:2) const : result packed(9:2))
 //     returns packed(7:2)
 //   NEST(boxes likeds(boxes_t)): data structures in data structures
+//   NOTE(text char(33000) const): a long argument
 dcl-c LOOSE 'IMQTSRV';
 dcl-c STRICT 'IMQTSTR';
 dcl-c LAST -1;
@@ -61,6 +62,7 @@ dcl-proc runTests;
     test_throw();
     test_setParm();
     test_nestedFields();
+    test_longArgs();
     test_copyArg();
     test_copyRejected();
     test_answerProc();
@@ -177,6 +179,20 @@ dcl-proc nest;
   gThrown = thr.msgId;
 end-proc;
 
+// Call NOTE of the loose mock
+dcl-proc note;
+  dcl-pi *n;
+    text char(33000) const;
+  end-pi;
+  dcl-s t char(33000);
+  dcl-s ptrs pointer dim(64);
+  dcl-ds thr likeds(imoq_throw_t);
+  t = text;
+  ptrs(1) = %addr(t);
+  imoq_invoke(LOOSE : 'NOTE' : 1 : %addr(ptrs) : *null : thr);
+  gThrown = thr.msgId;
+end-proc;
+
 dcl-proc setup;
   dcl-pi *n ind;
   end-pi;
@@ -198,6 +214,7 @@ dcl-proc setup;
     cmd('IMOQPROC OBJ(' + o + ') PROC(SCALE) RTNTYPE(*PACKED 7 2) +
          PARMS((*PACKED 7 2 *CONST) (*PACKED 9 2))');
     cmd('IMOQPROC OBJ(' + o + ') PROC(NEST) PARMS((*CHAR 40))');
+    cmd('IMOQPROC OBJ(' + o + ') PROC(NOTE) PARMS((*CHAR 33000 *CONST))');
   endfor;
   tst_end();
   return not tst_bad;
@@ -401,6 +418,41 @@ dcl-proc test_nestedFields;
   tst_end();
 end-proc;
 
+dcl-proc test_longArgs;
+  dcl-s t char(33000);
+  dcl-s v varchar(IMOQ_MAXARG);
+  tst_begin('arguments are recorded and matched up to 32,000 characters');
+  monitor;
+    cmd('IMOQRESET');
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(NOTE) +
+         ARGS((1 *LIKE ''%END-MARK'')) THROW(*MOCK)');
+    %subst(t : 3992 : 8) = 'END-MARK';
+    note(t);
+    tst_eqChar('IMQ0101' : gThrown : '*LIKE matched past 1,024');
+
+    v = imoq_arg(LOOSE : 'NOTE' : 1 : 1);
+    tst_eqNum(3999 : %len(v) : 'captured in full');
+    tst_eqChar('END-MARK' : %subst(v : 3992) : 'captured text');
+
+    // ABCDE ends at 32,000, FGHIJ comes after it
+    %subst(t : 31996 : 10) = 'ABCDEFGHIJ';
+    note(t);
+    v = imoq_arg(LOOSE : 'NOTE' : LAST : 1);
+    tst_eqNum(32000 : %len(v) : 'cut at 32,000');
+    tst_eqChar('ABCDE' : %subst(v : 31996) : 'up to 32,000');
+
+    cmd('IMOQVERIFY OBJ(IMQTSRV) PROC(NOTE) +
+         ARGS((1 *LIKE ''%END-MARK%'')) TIMES(*EXACTLY 2)');
+    cmd('IMOQVERIFY OBJ(IMQTSRV) PROC(NOTE) +
+         ARGS((1 *LIKE ''%ABCDE'')) TIMES(*ONCE)');
+    cmd('IMOQVERIFY OBJ(IMQTSRV) PROC(NOTE) +
+         ARGS((1 *LIKE ''%FGHIJ%'')) TIMES(*NEVER)');
+  on-error;
+    tst_error(imoq_lastError());
+  endmon;
+  tst_end();
+end-proc;
+
 dcl-proc test_series;
   tst_begin('RETURN values answer in order, then the last repeats');
   monitor;
@@ -578,7 +630,7 @@ end-proc;
 // SCALE: returns amount * 2 and sets result to amount * 3
 dcl-proc doubleIt;
   dcl-ds err likeds(imoq_err_t);
-  dcl-s v varchar(1024);
+  dcl-s v varchar(IMOQ_MAXARG);
   dcl-s n packed(31:9);
   imoq_answerGet(1 : '' : v : err);
   n = %dec(v : 31 : 9);
@@ -603,7 +655,7 @@ end-proc;
 
 dcl-proc test_answerProc;
   dcl-s r packed(9:2);
-  dcl-s v varchar(1024);
+  dcl-s v varchar(IMOQ_MAXARG);
   dcl-ds err likeds(imoq_err_t);
   tst_begin('an answer procedure reads and sets the call');
   monitor;

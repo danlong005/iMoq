@@ -600,7 +600,7 @@ IMOQUNUSED                    /* every stub has answered a call        */
 | `IMOQNOMORE` | Sends **IMQ0201** listing any call no successful `IMOQVERIFY` covered. Use it to catch surprise interactions. |
 | `IMOQORDER` | Sends **IMQ0200** unless a matching call came after the call the previous `IMOQORDER` matched. See [Checking the order of calls](#checking-the-order-of-calls). |
 | `IMOQUNUSED` | Sends **IMQ0203** listing any stub that answered no call, with its matchers. A stub with a wrong matcher doesn't fail on its own: the call just gets the default answer. `OBJ(name)` checks one mock. |
-| `IMOQGETARG` | Returns one captured argument to a CL variable (`*CHAR 256`). Use `CALL(*FIRST\|*LAST\|n)`, and `FIELD(name)` for a [subfield](#data-structures-and-arrays). |
+| `IMOQGETARG` | Returns the first 256 characters of one captured argument to a CL variable (`*CHAR 256`); `imoq_arg` returns all of it. Use `CALL(*FIRST\|*LAST\|n)`, and `FIELD(name)` for a [subfield](#data-structures-and-arrays). |
 | `IMOQCOUNT` | Returns the number of matching calls to a CL variable (`*DEC 10 0`). |
 
 ### Checking the order of calls
@@ -706,7 +706,7 @@ A successful check marks the calls it matched as verified, as `IMOQVERIFY` does.
 
 | Procedure | Returns |
 |---|---|
-| `imoq_arg(obj : proc : call : parm : field)` | The argument as text; `*OMIT` or `*NOTPASSED` for missing ones. `field` (optional) reads a subfield |
+| `imoq_arg(obj : proc : call : parm : field)` | The argument as text, up to 32,000 characters; `*OMIT` or `*NOTPASSED` for missing ones. `field` (optional) reads a subfield |
 | `imoq_argNum` · `imoq_argDate` · `imoq_argTime` · `imoq_argTimestamp` · `imoq_argInd` | The argument (or subfield) as a `packed(31:9)`, date, time, timestamp or indicator |
 | `imoq_argPassed(obj : proc : call : parm)` | `*off` if the argument was `*OMIT` or not passed |
 | `imoq_count(obj : proc)` | The number of recorded calls, or `-1` if the mock or procedure is unknown |
@@ -857,7 +857,7 @@ To test that code, call it directly from the driver job.
 ### Parameters that can't be described exactly
 
 - **Aligned data structures:** iMoq uses the positions you declare and doesn't add `ALIGN` padding.
-- **Sizes:** up to 64 parameters, command values of at most 256 characters (1,024 through the RPG API), and captured values cut at 1,024 characters. See [Limits](#limits) for the full list.
+- **Sizes:** up to 64 parameters, command values of at most 256 characters (1,024 through the RPG API), and arguments recorded up to 32,000 characters. See [Limits](#limits) for the full list.
 
 ### Not supported yet
 
@@ -909,7 +909,7 @@ From RPG, the same stubbing and verification is available as the [RPG API](#8-wr
 
 - Up to 64 parameters per program or procedure, 64 `ARGS`/`SETPARM`/`COPYARG` entries, 64 OR groups and 32 `RETURN` values. Up to 500 stubs at a time can have an answer procedure from `imoq_answers`. Command values are at most 256 characters; RPG API values up to 1,024.
 - Up to 64 fields per parameter, 999 elements per array field, data structures nested 8 deep and 256 fields per procedure. Field names are at most 30 characters with their data structures, and references at most 40 with their element numbers. Up to 2,000 subfield values are recorded per call.
-- Captured argument text is cut at 1,024 characters. Dates and times use ISO format.
+- Arguments are recorded, matched and captured up to 32,000 characters, and subfields up to 1,024. `IMOQGETARG` returns the first 256. Dates and times use ISO format.
 - A data export is mocked as `char(n)` storage of the real size.
 - Each stub call runs a few SQL statements against QTEMP. That's fast enough for unit tests, but mocks aren't meant for performance runs.
 

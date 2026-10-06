@@ -248,7 +248,7 @@ dcl-proc ensureTables;
        + 'VERIFIED CHAR(1) NOT NULL, TS TIMESTAMP NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_CARG (CALLID INT NOT NULL, '
        + 'PARMNO SMALLINT NOT NULL, STATE CHAR(1) NOT NULL, '
-       + 'VAL VARCHAR(1024) NOT NULL, FIELD VARCHAR(40) NOT NULL)');
+       + 'VAL VARCHAR(32000) NOT NULL, FIELD VARCHAR(40) NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_FLD (OBJ CHAR(10) NOT NULL, '
        + 'PROC VARCHAR(4096) NOT NULL, PARMNO SMALLINT NOT NULL, '
        + 'SEQ INT NOT NULL, NAME VARCHAR(30) NOT NULL, POS INT NOT NULL, '
@@ -1404,7 +1404,8 @@ end-proc;
 // Recorded calls
 // ==================================================================
 
-// Whole-parameter arguments of a call (subfield rows are left out)
+// Whole-parameter arguments of a call (subfield rows are left out),
+// each cut at 1,024 characters: enough to describe the call
 dcl-proc loadCallArgs;
   dcl-pi *n;
     callId int(10) const;
@@ -1420,7 +1421,8 @@ dcl-proc loadCallArgs;
   vals = '';
   nArgs = 0;
   exec sql declare cCarg cursor for
-    select parmno, state, val from qtemp.imoq_carg
+    select parmno, state, substr(val, 1, min(length(val), 1024))
+      from qtemp.imoq_carg
      where callid = :callId and field = '' order by parmno;
   exec sql open cCarg;
   dow sqlcode = 0;
@@ -1437,6 +1439,25 @@ dcl-proc loadCallArgs;
     endif;
   enddo;
   exec sql close cCarg;
+end-proc;
+
+// A recorded argument, in full: state P, O or N
+dcl-proc loadCallArg;
+  dcl-pi *n;
+    callId int(10) const;
+    parmNo int(10) const;
+    state char(1);
+    val varchar(IMOQ_MAXARG);
+  end-pi;
+  dcl-s p5 int(5);
+  p5 = parmNo;
+  val = '';
+  exec sql select state, val into :state, :val from qtemp.imoq_carg
+            where callid = :callId and parmno = :p5 and field = '';
+  if sqlcode <> 0;
+    state = 'N';
+    val = '';
+  endif;
 end-proc;
 
 // A recorded subfield value: state P, or the whole parameter's
@@ -1511,15 +1532,15 @@ dcl-proc callMatches;
     nM int(10) const;
     tgt likeds(target_t) const;
   end-pi;
-  dcl-s st char(1) dim(64);
-  dcl-s vals varchar(1024) dim(64);
-  dcl-s nArgs int(10);
   dcl-s i int(10);
   dcl-ds d likeds(imoq_def_t);
-  dcl-ds err likeds(imoq_err_t);
+  dcl-ds flds likeds(fields_t);
+  dcl-s haveFlds ind;
   dcl-s off int(10);
   dcl-s fst char(1);
   dcl-s fval varchar(1024);
+  dcl-s ast char(1);
+  dcl-s aval varchar(IMOQ_MAXARG);
   dcl-s ok ind;
   dcl-s g int(10);
   dcl-s used ind dim(IMOQ_MAXGRP);
@@ -1528,7 +1549,6 @@ dcl-proc callMatches;
   if nM = 0;
     return *on;
   endif;
-  loadCallArgs(callId : st : vals : nArgs);
   for i = 1 to nM;
     g = m(i).grp;
     if g > 0;
@@ -1540,16 +1560,19 @@ dcl-proc callMatches;
     clear d;
     d.type = '*CHAR';
     if m(i).field <> '';
-      findField(tgt.obj : tgt.proc : m(i).parmNo : m(i).field : d : off
-                : err);
+      if not haveFlds;
+        loadFields(tgt.obj : tgt.proc : flds);
+        haveFlds = *on;
+      endif;
+      fieldAt(flds : m(i).parmNo : m(i).field : d : off);
       loadCallField(callId : m(i).parmNo : m(i).field : fst : fval);
       ok = imoq_match(m(i).matcher : m(i).val : fst : fval : d);
     else;
       if m(i).parmNo <= tgt.nDefs;
         d = tgt.defs(m(i).parmNo);
       endif;
-      ok = imoq_match(m(i).matcher : m(i).val : st(m(i).parmNo)
-                      : vals(m(i).parmNo) : d);
+      loadCallArg(callId : m(i).parmNo : ast : aval);
+      ok = imoq_match(m(i).matcher : m(i).val : ast : aval : d);
     endif;
     if not ok;
       if g = 0;
@@ -3007,7 +3030,7 @@ dcl-proc imoq_getArg export;
     callNo int(10) const;
     parmNo int(10) const;
     field varchar(40) const;
-    val varchar(1024);
+    val varchar(IMOQ_MAXARG);
     err likeds(imoq_err_t);
   end-pi;
   dcl-s objType char(7);
@@ -3066,24 +3089,20 @@ end-proc;
 // A recorded argument (or subfield) as text: *OMIT or *NOTPASSED
 // when it has no value
 dcl-proc callArgText;
-  dcl-pi *n varchar(1024);
+  dcl-pi *n varchar(IMOQ_MAXARG);
     callId int(10) const;
     parmNo int(10) const;
     field varchar(40) const;
   end-pi;
   dcl-s state char(1);
-  dcl-s val varchar(1024);
-  dcl-s p5 int(5);
+  dcl-s val varchar(IMOQ_MAXARG);
+  dcl-s fval varchar(1024);
 
   if field <> '';
-    loadCallField(callId : parmNo : field : state : val);
+    loadCallField(callId : parmNo : field : state : fval);
+    val = fval;
   else;
-    p5 = parmNo;
-    exec sql select state, val into :state, :val from qtemp.imoq_carg
-              where callid = :callId and parmno = :p5 and field = '';
-    if sqlcode <> 0;
-      state = 'N';
-    endif;
+    loadCallArg(callId : parmNo : state : val);
   endif;
   if state = 'N';
     return '*NOTPASSED';
@@ -3114,7 +3133,7 @@ dcl-proc imoq_answerGet export;
   dcl-pi *n ind;
     parmNo int(10) const;
     field varchar(40) const;
-    val varchar(1024);
+    val varchar(IMOQ_MAXARG);
     err likeds(imoq_err_t);
   end-pi;
   dcl-ds fd likeds(imoq_def_t);
@@ -3242,7 +3261,7 @@ dcl-proc imoq_cl_getArg export;
     rtn char(256);
     err likeds(imoq_err_t);
   end-pi;
-  dcl-s v varchar(1024);
+  dcl-s v varchar(IMOQ_MAXARG);
   dcl-s field varchar(40);
   dcl-s msg varchar(256);
   clearErr(err);
@@ -3498,14 +3517,14 @@ dcl-proc imoq_invoke export;
   dcl-s hasRtn ind;
   dcl-s nDefs int(10);
   dcl-s st char(1) dim(64);
-  dcl-s vals varchar(1024) dim(64);
+  dcl-s vals varchar(IMOQ_MAXARG) dim(64);
   dcl-s nPassed int(10);
   dcl-s nCap int(10);
   dcl-s i int(10);
   dcl-s callId int(10);
   dcl-s parmNo int(5);
   dcl-s state char(1);
-  dcl-s v varchar(1024);
+  dcl-s v varchar(IMOQ_MAXARG);
   dcl-s stubIds int(10) dim(500);
   dcl-s stubLeft int(10) dim(500);
   dcl-s stubUsed int(10) dim(500);
@@ -3543,7 +3562,7 @@ dcl-proc imoq_invoke export;
   dcl-s fromNo int(5);
   dcl-s fromFld varchar(40);
   dcl-s toFld varchar(40);
-  dcl-s cpRtn varchar(1024);
+  dcl-s cpRtn varchar(IMOQ_MAXARG);
   dcl-s hasCpRtn ind;
   dcl-s ansObj char(10);
   dcl-s ansLib char(10);
@@ -3921,7 +3940,7 @@ dcl-proc stubMatches;
     defs likeds(imoq_def_t) dim(64) const;
     nDefs int(10) const;
     st char(1) dim(64) const;
-    vals varchar(1024) dim(64) const;
+    vals varchar(IMOQ_MAXARG) dim(64) const;
     flds likeds(fields_t) const;
     nX int(10) const;
     xParm int(10) dim(MAXFVALS) const;
@@ -4157,7 +4176,7 @@ dcl-proc imoq_lastError export;
 end-proc;
 
 dcl-proc imoq_arg export;
-  dcl-pi *n varchar(1024);
+  dcl-pi *n varchar(IMOQ_MAXARG);
     obj char(10) const;
     proc varchar(4096) const;
     callNo int(10) const;
@@ -4165,7 +4184,7 @@ dcl-proc imoq_arg export;
     fieldIn varchar(40) const options(*nopass);
   end-pi;
   dcl-ds err likeds(imoq_err_t);
-  dcl-s v varchar(1024);
+  dcl-s v varchar(IMOQ_MAXARG);
   dcl-s field varchar(40);
   dcl-s msg varchar(256);
   clearErr(err);

@@ -233,14 +233,14 @@ end-proc;
 // imoq_decode - render the value at ptr as text
 // ==================================================================
 dcl-proc imoq_decode export;
-  dcl-pi *n varchar(1024);
+  dcl-pi *n varchar(IMOQ_MAXARG);
     ptr pointer value;
     def likeds(imoq_def_t) const;
   end-pi;
 
-  dcl-s chr char(1024) based(ptr);
+  dcl-s chr char(IMOQ_MAXARG) based(ptr);
   dcl-s dataPtr pointer;
-  dcl-s data char(1024) based(dataPtr);
+  dcl-s data char(IMOQ_MAXARG) based(dataPtr);
   dcl-s len2 uns(5) based(ptr);
   dcl-s len4 uns(10) based(ptr);
   dcl-s i3 int(3) based(ptr);
@@ -265,8 +265,8 @@ dcl-proc imoq_decode export;
     when def.type = '*CHAR' or def.type = '*IND' or def.type = '*DATE'
          or def.type = '*TIME' or def.type = '*TIMESTAMP';
       n = def.len;
-      if n > 1024;
-        n = 1024;
+      if n > IMOQ_MAXARG;
+        n = IMOQ_MAXARG;
       endif;
       return %trimr(%subst(chr : 1 : n));
 
@@ -281,8 +281,8 @@ dcl-proc imoq_decode export;
       if n > def.len;
         return '*INVALID';
       endif;
-      if n > 1024;
-        n = 1024;
+      if n > IMOQ_MAXARG;
+        n = IMOQ_MAXARG;
       endif;
       if n = 0;
         return '';
@@ -345,7 +345,7 @@ dcl-proc imoq_encode export;
   dcl-pi *n ind;
     ptr pointer value;
     def likeds(imoq_def_t) const;
-    text varchar(1024) const;
+    text varchar(IMOQ_MAXARG) const;
     msg varchar(256);
   end-pi;
 
@@ -366,7 +366,7 @@ dcl-proc imoq_encode export;
   dcl-s f8 float(8) based(ptr);
   dcl-s pp pointer based(ptr);
   dcl-s n int(10);
-  dcl-s t varchar(1024);
+  dcl-s t varchar(IMOQ_MAXARG);
   dcl-s wrkDate date;
   dcl-s wrkTime time;
   dcl-s wrkTs timestamp;
@@ -501,7 +501,7 @@ dcl-proc imoq_match export;
     matcher char(10) const;
     expected varchar(1024) const;
     state char(1) const;
-    actual varchar(1024) const;
+    actual varchar(IMOQ_MAXARG) const;
     def likeds(imoq_def_t) const;
   end-pi;
 
@@ -587,7 +587,7 @@ end-proc;
 // ------------------------------------------------------------------
 dcl-proc compareVal;
   dcl-pi *n int(10);
-    actual varchar(1024) const;
+    actual varchar(IMOQ_MAXARG) const;
     expected varchar(1024) const;
     def likeds(imoq_def_t) const;
   end-pi;
@@ -647,7 +647,7 @@ end-proc;
 // ------------------------------------------------------------------
 dcl-proc likeMatch;
   dcl-pi *n ind;
-    s varchar(1024) const;
+    s varchar(IMOQ_MAXARG) const;
     p varchar(1024) const;
   end-pi;
 
