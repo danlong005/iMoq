@@ -90,6 +90,10 @@ dcl-proc test_normDef;
   tst_check(not imoq_normDef(def : msg) : 'char 0 accepted');
   def.type = '*BOGUS';
   tst_check(not imoq_normDef(def : msg) : 'unknown type accepted');
+  def.type = '*VARCHAR';
+  def.len = 70000;
+  def.passing = '*VALUE';
+  tst_check(imoq_normDef(def : msg) : '*VARCHAR *VALUE: ' + msg);
   tst_end();
 end-proc;
 

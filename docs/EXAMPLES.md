@@ -94,7 +94,7 @@ needs.
 | `EXCUST` | `*PGM` | Customer lookup | `custId char(5) const`, `name char(30)`, `found ind` |
 | `EXAUDIT` | `*PGM`, strict | Audit trail | `event char(20) const` |
 | `EXPRICE` | `*SRVPGM` | Pricing service | `EX_PRICE(item char(5) const) packed(7:2)`<br>`EX_DISCOUNT(amount packed(7:2) const : code char(10) const options(*nopass:*omit)) packed(7:2)`<br>`EX_LOG(text char(50) const)`<br>`EX_SCHEDULE` and `EX_CUTOFF` (`EXAPI` only: time, timestamp and date parameters) |
-| `EXCALC` | `*SRVPGM` | Calculator (`EXVALUE`) | `EX_ROUND(amount packed(9:2) value : places int(10) value) packed(9:2)` |
+| `EXCALC` | `*SRVPGM` | Calculator (`EXVALUE`) | `EX_ROUND(amount packed(9:2) value : places int(10) value) packed(9:2)`<br>`EX_INITIALS(name varchar(30) value : note varchar(70000:4) value) char(3)` |
 | `EXPROF` | `*PGM` | Customer profile (`EXTYPES`) | `name varchar(30)`, `balance zoned(9:2)`, `rate float(8)`, `note pointer` |
 | `EXORDER` | `*SRVPGM` | Order entry (`EXFIELD`) | `EX_ADDORDER(order likeds(order_t) const : monthly packed(9:2) dim(12) const) likeds(result_t)`<br>`EX_PRICEIT(order likeds(order_t))` |
 
@@ -477,7 +477,8 @@ expect(not imoq_ok('IMOQWHEN OBJ(EXCALC) PROC(EX_ROUND) +
 What to notice:
 - **`*VALUE` goes in the layout** where the passing style goes, exactly as the
   prototype says `value`. Get it wrong and the stub reads garbage.
-- **Matchers and captures work as usual.**
+- **Matchers and captures work as usual**, for every type. That includes
+  varchar, with its 2-byte or (over 65535) 4-byte length prefix.
 - **`SETPARM` is refused** with IMQ0014: the caller keeps its own copy of a
   value parameter, so there's nothing to write back to.
 

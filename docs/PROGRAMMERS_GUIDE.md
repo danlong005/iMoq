@@ -828,7 +828,6 @@ To test that code, call it directly from the driver job.
 
 - **Arrays of data structures** (`likeds(x) dim(n)`) and data structures nested inside data structures can't be described with `IMOQFIELD`, which only repeats a single field. Declare the elements you need as separate fields at their own positions.
 - **Aligned data structures:** iMoq uses the positions you declare and doesn't add `ALIGN` padding.
-- **`*VARCHAR` passed `*VALUE`** isn't supported.
 - **Sizes:** up to 64 parameters, command values of at most 256 characters (1,024 through the RPG API), and captured values cut at 1,024 characters. See [Limits](#limits) for the full list.
 
 ### Not supported yet
@@ -882,7 +881,7 @@ From RPG, the same stubbing and verification is available as the [RPG API](#8-wr
 - Up to 64 parameters per program or procedure, 64 `ARGS`/`SETPARM`/`COPYARG` entries, 64 OR groups and 32 `RETURN` values. Up to 500 stubs at a time can have an answer procedure from `imoq_answers`. Command values are at most 256 characters; RPG API values up to 1,024.
 - Up to 64 fields per parameter, 999 elements per array field and 256 fields per procedure. Up to 2,000 subfield values are recorded per call.
 - Captured argument text is cut at 1,024 characters. Dates and times use ISO format.
-- `*VARCHAR` can't be passed `*VALUE`. A data export is mocked as `char(n)` storage of the real size.
+- A data export is mocked as `char(n)` storage of the real size.
 - Each stub call runs a few SQL statements against QTEMP. That's fast enough for unit tests, but mocks aren't meant for performance runs.
 
 ---

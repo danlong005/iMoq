@@ -1,15 +1,14 @@
 # iMoq to-do list
 
 Work still to do on iMoq, from a review of its features and gaps
-(2026-09-22, updated 2026-10-06 after OR groups). Items are
+(2026-09-22, updated 2026-10-06 after *VARCHAR passed *VALUE). Items are
 roughly in priority order within each section.
 
 ## Features
 
-- [ ] **More parameter types.** `*VARCHAR` passed `*VALUE`, captured
-      arguments longer than 1,024 characters, arrays of data structures
-      (`likeds(x) dim(n)`: a field group repeating with a stride) and nested
-      data structures.
+- [ ] **More parameter types.** Captured arguments longer than 1,024
+      characters, arrays of data structures (`likeds(x) dim(n)`: a field
+      group repeating with a stride) and nested data structures.
 - [ ] **Detect qualified calls.** Have `IMOQCHK` report code that calls a mocked
       program with a qualified name (`CALL MYLIB/X`, `EXTPGM('MYLIB/X')`), which
       bypasses the mock.

@@ -3,7 +3,7 @@
 // EXVALUE_T - Parameters passed by value
 //
 // Features: *VALUE in the IMOQPROC layout, matchers and captures on
-// value parameters, and why SETPARM can't set them.
+// value parameters (varchar too), and why SETPARM can't set them.
 // Run it with the driver EXVALUE.
 // ------------------------------------------------------------------
 ctl-opt main(main);
@@ -17,6 +17,13 @@ ctl-opt main(main);
 dcl-pr roundTo packed(9:2) extproc('EX_ROUND');
   amount packed(9:2) value;
   places int(10) value;
+end-pr;
+
+// EXCALC (*SRVPGM), procedure EX_INITIALS: initials of a name. A
+// varchar over 65535 has a 4-byte length prefix.
+dcl-pr initials char(3) extproc('EX_INITIALS');
+  name varchar(30) value;
+  note varchar(70000:4) value;
 end-pr;
 
 /copy QRPGLESRC,EXAMPLE_H
@@ -46,4 +53,17 @@ dcl-proc main;
          : 'SETPARM on a *VALUE parameter is rejected');
   expect(%scan('passed by value' : imoq_lastError()) > 0
          : 'imoq_lastError() says why');
+
+  // Varchar parameters can be passed by value too
+  imoq('IMOQWHEN OBJ(EXCALC) PROC(EX_INITIALS) +
+        ARGS((1 *EQ ''Ada Lovelace'')) RETURN(AL)');
+  imoq('IMOQWHEN OBJ(EXCALC) PROC(EX_INITIALS) +
+        ARGS((2 *LIKE ''%urgent%'')) RETURN(URG)');
+
+  expect(initials('Ada Lovelace' : '') = 'AL' : 'varchar 30 value');
+  expect(initials('Bob' : 'an urgent note') = 'URG'
+         : 'varchar 70000 value');
+  expect(initials('Bob' : '') = ' ' : 'no stub matches');
+  expect(imoq_arg('EXCALC' : 'EX_INITIALS' : 2 : 1) = 'Bob'
+         : 'captured name');
 end-proc;

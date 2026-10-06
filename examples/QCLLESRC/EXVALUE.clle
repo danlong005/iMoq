@@ -18,6 +18,10 @@
                           RTNTYPE(*PACKED 9 2) +
                           PARMS((*PACKED 9 2 *VALUE) (*INT 10 0 +
                           *VALUE))
+             IMOQPROC   OBJ(EXCALC) PROC(EX_INITIALS) +
+                          RTNTYPE(*CHAR 3) +
+                          PARMS((*VARCHAR 30 *VALUE) (*VARCHAR 70000 +
+                          *VALUE))
              IMOQBUILD  OBJ(EXCALC)
 
 /* 2. Compile the test program                                      */

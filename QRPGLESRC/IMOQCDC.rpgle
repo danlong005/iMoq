@@ -88,11 +88,6 @@ dcl-proc imoq_normDef export;
     msg = 'Unknown type ' + %trim(def.type);
     return *off;
   endsl;
-
-  if def.passing = '*VALUE' and def.type = '*VARCHAR';
-    msg = '*VARCHAR cannot be passed *VALUE by iMoq stubs';
-    return *off;
-  endif;
   return *on;
 end-proc;
 
