@@ -55,6 +55,7 @@ dcl-ds gV qualified dim(VSLOTS);
   proc varchar(4096);
   nM int(10);
   m likeds(imoq_matcher_t) dim(64);
+  orGrp int(10);
 end-ds;
 dcl-s gVGen int(10);
 
@@ -202,6 +203,7 @@ dcl-proc addMatcher;
       gMsg = 'At most 64 argument matchers are allowed';
       return *off;
     endif;
+    m.grp = gV(s).orGrp;
     if not imoq_checkMatcher(gV(s).obj : gV(s).proc : m
                              : 'Matcher ' + %char(gV(s).nM + 1) : err);
       gMsg = %trimr(err.text);
@@ -219,8 +221,41 @@ dcl-proc addMatcher;
     gMsg = 'At most 64 argument matchers are allowed';
     return *off;
   endif;
+  m.grp = stub.orGrp;
   stub.nM += 1;
   stub.m(stub.nM) = m;
+  return saveStub(stub);
+end-proc;
+
+// Start the next OR group of a stub or a verification
+dcl-proc addGroup;
+  dcl-pi *n ind;
+    h int(10) const;
+  end-pi;
+  dcl-ds stub likeds(imoq_stub_t);
+  dcl-s s int(10);
+  dcl-s tooMany varchar(80);
+  tooMany = 'At most ' + %char(IMOQ_MAXGRP) + ' imoq_or groups are allowed';
+  if h < 0;
+    s = vSlot(h);
+    if s = 0;
+      return *off;
+    endif;
+    if gV(s).orGrp >= IMOQ_MAXGRP;
+      gMsg = tooMany;
+      return *off;
+    endif;
+    gV(s).orGrp += 1;
+    return *on;
+  endif;
+  if not loadStub(h : stub);
+    return *off;
+  endif;
+  if stub.orGrp >= IMOQ_MAXGRP;
+    gMsg = tooMany;
+    return *off;
+  endif;
+  stub.orGrp += 1;
   return saveStub(stub);
 end-proc;
 
@@ -573,6 +608,19 @@ dcl-proc imoq_withTimestamp export;
     f = field;
   endif;
   if not addMatcher(h : parmNo : matcher : %char(value : *iso) : f);
+    fail(gMsg);
+  endif;
+end-proc;
+
+// imoq_or(h) - the imoq_with calls after it form a new alternative:
+// the stub or verification matches when all of one alternative's
+// matchers match. Matchers added before the first imoq_or apply to
+// every alternative.
+dcl-proc imoq_or export;
+  dcl-pi *n;
+    h int(10) const;
+  end-pi;
+  if not addGroup(h);
     fail(gMsg);
   endif;
 end-proc;

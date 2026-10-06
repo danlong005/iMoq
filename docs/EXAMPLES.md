@@ -287,11 +287,23 @@ expect(getDiscount(150.00) = 10.00 : '*GT 100');
 expect(getPrice('D0004') = 3.00 : '*IN C0003,D0004');
 expect(getDiscount(70.00) = 5.00 : '*BETWEEN 60,70');
 expect(getPrice('Z9999') = 0 : 'no match returns zero');
+
+// code VIP, or an amount from 20 to 30
+imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_DISCOUNT) +
+      ARGS((2 *EQ VIP *N 1) (1 *BETWEEN ''20,30'' *N 2)) +
+      RETURN(''7.00'')');
+
+expect(getDiscount(5.00 : 'VIP') = 7.00 : 'group 1: code VIP');
+expect(getDiscount(25.00 : 'SPRING') = 7.00 : 'group 2: 20 to 30');
+expect(getDiscount(5.00 : 'SPRING') = 0 : 'neither group');
 ```
 
 What to notice:
 - **`ARGS` entries are `(parameter matcher value)`.** Every entry must match for
-  the stub to answer.
+  the stub to answer, unless it's in an OR group.
+- **An OR group is the fifth element of an entry.** `*N` skips the field
+  before it. Entries without a group must always match; of the rest, all the
+  entries of one group must match.
 - **The matchers are** `*EQ`, `*NE`, `*GT`, `*GE`, `*LT`, `*LE`, `*LIKE` (`%` is
   any text, `_` is one character), `*BLANK`, `*ANY`, `*IN`, `*BETWEEN`, `*OMIT`
   and `*NOTPASSED`.
@@ -860,7 +872,7 @@ jobs with the RPG API, one test procedure per topic:
 | Procedure | Shows |
 |---|---|
 | `stubbing` | `imoq_when`, a series of `imoq_returns`, `imoq_setParm`, `imoq_times(h : 1)` and `IMOQ_ALWAYS`, and the newest stub winning. `imoq_copyArg` and answer procedures (`imoq_answers`) are in [EXANSWER](#exanswer-answers-built-from-the-arguments) |
-| `matchers` | All thirteen matchers: `IMOQ_EQ`, `NE`, `LIKE`, `BLANK` on text; `GT`, `GE`, `LT`, `LE` on numbers (two on one parameter make a range); `IN` and `BETWEEN` with comma-separated values; `ANY`, `OMIT`, `NOTPASSED` on an optional parameter |
+| `matchers` | All thirteen matchers: `IMOQ_EQ`, `NE`, `LIKE`, `BLANK` on text; `GT`, `GE`, `LT`, `LE` on numbers (two on one parameter make a range); `IN` and `BETWEEN` with comma-separated values; `ANY`, `OMIT`, `NOTPASSED` on an optional parameter; `imoq_or` alternatives in a stub and in a verification |
 | `typedValues` | Times and timestamps in `imoq_with`, numbers and dates in `imoq_setParm`, timestamp and time return values |
 | `throwing` | `imoq_throws` with `IMOQ_MOCK` (IMQ0101) and with `CPF9898` from `QCPFMSG` |
 | `verifying` | `imoq_verify` with `imoq_calledOnce`, `imoq_calledTimes`, `imoq_calledAtLeast`, `imoq_calledAtMost`, `imoq_neverCalled`, `imoq_matchCount`, `imoq_noMoreCalls` with and without a mock name, and a failed check's message. `imoq_noUnusedStubs` is in [EXUNUSED](#exunused-find-stubs-that-no-call-used) |

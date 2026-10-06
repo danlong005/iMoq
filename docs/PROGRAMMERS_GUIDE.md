@@ -414,7 +414,7 @@ IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) ARGS((1 *GT 1000)) RETURN('99.00')
 IMOQWHEN OBJ(CUSTLKUP) ARGS((1 *LIKE 'C_9%')) SETPARM((3 '1'))
 ```
 
-The matchers are `*EQ` (default), `*NE`, `*GT`, `*GE`, `*LT`, `*LE`, `*LIKE` (`%` any text, `_` one character), `*BLANK` (blanks, or zero for numbers), `*IN`, `*BETWEEN`, `*ANY`, `*OMIT` and `*NOTPASSED`. Numeric parameters compare as numbers, so `100` matches `100.00`. Character comparisons ignore trailing blanks. All matchers in one `ARGS` must match.
+The matchers are `*EQ` (default), `*NE`, `*GT`, `*GE`, `*LT`, `*LE`, `*LIKE` (`%` any text, `_` one character), `*BLANK` (blanks, or zero for numbers), `*IN`, `*BETWEEN`, `*ANY`, `*OMIT` and `*NOTPASSED`. Numeric parameters compare as numbers, so `100` matches `100.00`. Character comparisons ignore trailing blanks. All matchers in one `ARGS` must match, unless you put them in [OR groups](#either-or-matchers-or-groups).
 
 `*IN` and `*BETWEEN` take several values in one, separated by commas; blanks around each value are ignored:
 
@@ -424,6 +424,36 @@ IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) ARGS((1 *BETWEEN '100,500')) RETURN('9.00')
 ```
 
 `*IN` matches any of up to 64 values. `*BETWEEN` takes exactly two, `low,high`, and includes both ends. A value can't contain a comma itself. In the RPG API, pass the list as text: `imoq_with(h : 2 : IMOQ_IN : 'PA,NJ,NY')`.
+
+### Either-or matchers: OR groups
+
+For alternatives across parameters, give `ARGS` entries a group number, the fifth element (`*N` skips the field before it). Entries without a group must always match. Of the entries with a group, all the entries of at least one group must match:
+
+```
+/* state PA, or an amount over 1000 */
+IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) +
+         ARGS((2 *EQ PA *N 1) (1 *GT 1000 *N 2)) RETURN('0.00')
+
+/* country US, and either state PA or an amount over 1000 */
+IMOQWHEN OBJ(TAXSRV) PROC(CALCTAX) +
+         ARGS((3 *EQ US) (2 *EQ PA *N 1) (1 *GT 1000 *N 2)) RETURN('0.00')
+```
+
+Group numbers go from 1 to 64; they don't need to start at 1 or follow each other. A group can hold several entries, which must all match. Groups work the same way in `IMOQVERIFY`, `IMOQORDER` and `IMOQCOUNT`, and failure messages show them as `(3 *EQ 'US', (2 *EQ 'PA') or (1 *GT '1000'))`.
+
+In the RPG API, `imoq_or(h)` starts the next group. Matchers added before the first `imoq_or` must always match:
+
+```rpgle
+h = imoq_when('TAXSRV' : 'CALCTAX');
+imoq_with(h : 3 : IMOQ_EQ : 'US');    // always
+imoq_or(h);
+imoq_with(h : 2 : IMOQ_EQ : 'PA');    // either this
+imoq_or(h);
+imoq_with(h : 1 : IMOQ_GT : 1000);    // or this
+imoq_returns(h : 0);
+```
+
+Start every alternative with `imoq_or`, the first one too: `imoq_with(A)`, `imoq_or`, `imoq_with(B)` means A and B, because A came before any `imoq_or`.
 
 ### A default answer plus special cases
 
@@ -612,6 +642,7 @@ assert(imoq_calledOnce(v) : imoq_lastError());
 |---|---|---|
 | `h = imoq_when(obj : proc)` | Starts a stub and returns its handle. Omit `proc` for a program mock. The stub answers calls straight away | `IMOQWHEN OBJ PROC` |
 | `imoq_with(h : parmNo : matcher : value : field)` | Adds an argument matcher. `IMOQ_ANY`, `IMOQ_BLANK`, `IMOQ_OMIT` and `IMOQ_NOTPASSED` take no value. The optional `field` matches a [subfield](#data-structures-and-arrays) | `ARGS((n matcher value field))` |
+| `imoq_or(h)` | Starts the next [OR group](#either-or-matchers-or-groups): the matchers added after it are one alternative. Works on verification handles too | `ARGS((n matcher value field group))` |
 | `imoq_returns(h : value)` | Adds a return value. Call it again for a series: one value per call, and the last one repeats | `RETURN(v …)` |
 | `imoq_setParm(h : parmNo : value : field)` | Fills an output parameter, or with `field` one of its subfields. Parameter 0 with a field sets a subfield of a data structure return value | `SETPARM((n value field))` |
 | `imoq_throws(h : msgId : msgDta : msgf : msgfLib)` | Sends an escape message instead of answering. `msgId` `IMOQ_MOCK` sends **IMQ0101**; for another message ID, pass its message file (`msgfLib` defaults to `*LIBL`) | `THROW(…)` |
@@ -804,7 +835,7 @@ To test that code, call it directly from the driver job.
 
 Some things Mockito and Moq can do aren't in iMoq yet. The planned work is tracked in [todo.md](../todo.md).
 
-- **Either-or matchers across parameters.** All matchers in one `ARGS` must match. `*IN` covers several values of one parameter; for alternatives across parameters, define one stub per alternative.
+- **Nested OR.** [OR groups](#either-or-matchers-or-groups) are one level deep: matchers that always apply, and alternatives of matchers that must all match. An alternative can't hold an OR of its own; write it out as more groups.
 
 iMoq also never passes a call on to the real object, as a Mockito spy or Moq's `CallBase` would. That's deliberate: a test that can reach the real program can also change real data.
 
@@ -821,7 +852,7 @@ The mock is identified by `OBJ(name)`. Service program mocks also take `PROC(exp
 | `IMOQPROC` | `OBJ` · `PROC` · `RTNTYPE(type len dec)` · `PARMS((type len dec\|passing [passing]) …)` | – |
 | `IMOQFIELD` | `OBJ` · `PROC` · `PARM(n\|0)` · `FIELDS((name pos\|*NEXT type len dec [elements]) …)` | – |
 | `IMOQBUILD` | `OBJ` | – |
-| `IMOQWHEN` | `OBJ` · `PROC(*PGM\|name)` · `ARGS((n matcher value [field]) …)` · `RETURN(v …)` · `SETPARM((n value [field]) …)` · `COPYARG((from to [fromField] [toField]) …)` · `THROW(msgid msgf lib data)` · `ANSWER(lib/obj [proc])` · `TIMES(*ALWAYS\|n)` | `when().thenReturn()/thenThrow()/thenAnswer()` / `Setup().Returns()/Callback()/Throws()` |
+| `IMOQWHEN` | `OBJ` · `PROC(*PGM\|name)` · `ARGS((n matcher value [field] [group]) …)` · `RETURN(v …)` · `SETPARM((n value [field]) …)` · `COPYARG((from to [fromField] [toField]) …)` · `THROW(msgid msgf lib data)` · `ANSWER(lib/obj [proc])` · `TIMES(*ALWAYS\|n)` | `when().thenReturn()/thenThrow()/thenAnswer()` / `Setup().Returns()/Callback()/Throws()` |
 | `IMOQVERIFY` | `OBJ` · `PROC` · `ARGS` · `TIMES(*ONCE\|*NEVER\|*EXACTLY n\|*ATLEAST n\|*ATMOST n)` | `verify(m, times(n))` / `Verify(Times)` |
 | `IMOQORDER` | `OBJ` · `PROC` · `ARGS` · `AFTER(*PREV\|*START)` | `inOrder(…).verify(m)` / `MockSequence` |
 | `IMOQNOMORE` | `OBJ(*ALL\|name)` | `verifyNoMoreInteractions()` / `VerifyNoOtherCalls()` |
@@ -836,9 +867,9 @@ From RPG, the same stubbing and verification is available as the [RPG API](#8-wr
 
 | RPG API | Command |
 |---|---|
-| `h = imoq_when(obj : proc)` · `imoq_with` · `imoq_returns` · `imoq_setParm` · `imoq_copyArg` · `imoq_answers` · `imoq_throws` · `imoq_times` | `IMOQWHEN` |
+| `h = imoq_when(obj : proc)` · `imoq_with` · `imoq_or` · `imoq_returns` · `imoq_setParm` · `imoq_copyArg` · `imoq_answers` · `imoq_throws` · `imoq_times` | `IMOQWHEN` |
 | `imoq_answerArg` / `Num` / `Date` / `Time` / `Timestamp` / `Ind` · `imoq_answerArgPassed` · `imoq_answerReturns` · `imoq_answerSetParm` | inside an answer procedure |
-| `v = imoq_verify(obj : proc)` · `imoq_with` · `imoq_calledOnce` / `imoq_calledTimes` / `imoq_calledAtLeast` / `imoq_calledAtMost` / `imoq_neverCalled` | `IMOQVERIFY` |
+| `v = imoq_verify(obj : proc)` · `imoq_with` · `imoq_or` · `imoq_calledOnce` / `imoq_calledTimes` / `imoq_calledAtLeast` / `imoq_calledAtMost` / `imoq_neverCalled` | `IMOQVERIFY` |
 | `imoq_calledInOrder(v)` · `imoq_startOrder()` | `IMOQORDER` |
 | `imoq_matchCount(v)` · `imoq_count(obj : proc)` | `IMOQCOUNT` |
 | `imoq_noMoreCalls(obj)` | `IMOQNOMORE` |
@@ -848,7 +879,7 @@ From RPG, the same stubbing and verification is available as the [RPG API](#8-wr
 
 ### Limits
 
-- Up to 64 parameters per program or procedure, 64 `ARGS`/`SETPARM`/`COPYARG` entries and 32 `RETURN` values. Up to 500 stubs at a time can have an answer procedure from `imoq_answers`. Command values are at most 256 characters; RPG API values up to 1,024.
+- Up to 64 parameters per program or procedure, 64 `ARGS`/`SETPARM`/`COPYARG` entries, 64 OR groups and 32 `RETURN` values. Up to 500 stubs at a time can have an answer procedure from `imoq_answers`. Command values are at most 256 characters; RPG API values up to 1,024.
 - Up to 64 fields per parameter, 999 elements per array field and 256 fields per procedure. Up to 2,000 subfield values are recorded per call.
 - Captured argument text is cut at 1,024 characters. Dates and times use ISO format.
 - `*VARCHAR` can't be passed `*VALUE`. A data export is mocked as `char(n)` storage of the real size.

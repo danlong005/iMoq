@@ -1,14 +1,11 @@
 # iMoq to-do list
 
 Work still to do on iMoq, from a review of its features and gaps
-(2026-09-22, updated 2026-09-26 after COPYARG and ANSWER). Items are
+(2026-09-22, updated 2026-10-06 after OR groups). Items are
 roughly in priority order within each section.
 
 ## Features
 
-- [ ] **OR between matchers.** All `ARGS` entries must match today. `*IN`
-      covers one parameter with several values; OR across parameters needs
-      a syntax. Two stubs with the same answer work in the meantime.
 - [ ] **More parameter types.** `*VARCHAR` passed `*VALUE`, captured
       arguments longer than 1,024 characters, arrays of data structures
       (`likeds(x) dim(n)`: a field group repeating with a stride) and nested

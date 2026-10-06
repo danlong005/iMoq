@@ -142,6 +142,19 @@ dcl-pr imoq_with overload(imoq_withChar : imoq_withNum : imoq_withDate
                           : imoq_withTime : imoq_withTimestamp);
 /endif
 
+// Start an alternative (OR). The imoq_with calls after it form a new
+// group; the stub or verification matches when all of one group's
+// matchers match. Matchers added before the first imoq_or must match
+// in every case:
+//   imoq_with(h : 3 : IMOQ_EQ : 'US');    // always
+//   imoq_or(h);
+//   imoq_with(h : 1 : IMOQ_EQ : 'PA');    // either this
+//   imoq_or(h);
+//   imoq_with(h : 2 : IMOQ_GT : 100);     // or this
+dcl-pr imoq_or extproc('IMOQ_OR');
+  h int(10) const;
+end-pr;
+
 // Add a return value. Call it again for a series: one value per
 // call, and the last one repeats.
 dcl-pr imoq_returnsChar extproc('IMOQ_RETURNSCHAR');

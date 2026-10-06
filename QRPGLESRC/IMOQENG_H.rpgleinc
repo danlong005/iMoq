@@ -10,6 +10,7 @@
 /define IMOQENG_H
 
 dcl-c IMOQ_MAXP 64;
+dcl-c IMOQ_MAXGRP 64;         // OR groups in one ARGS
 
 // Parameter / return value layout
 dcl-ds imoq_def_t qualified template;
@@ -34,14 +35,17 @@ dcl-ds imoq_throw_t qualified template;
   msgDta varchar(512);
 end-ds;
 
-// Argument matcher: ARGS((parmNo[.field] matcher value)).
+// Argument matcher: ARGS((parmNo matcher value field group)).
 // field is blank for the whole parameter, else a subfield declared
 // with IMOQFIELD: NAME, or NAME(n) for an array element.
+// grp 0 must always match; of the matchers with a group number, all
+// of at least one group must match (OR between the groups).
 dcl-ds imoq_matcher_t qualified template;
   parmNo int(10);
   matcher char(10);
   val varchar(1024);
   field varchar(40);
+  grp int(10);
 end-ds;
 
 // A complete stub (IMOQWHEN), as saved by imoq_stubSave
@@ -75,6 +79,8 @@ dcl-ds imoq_stub_t qualified template;
   ansLib char(10);
   ansProc varchar(256);
   ansPtr pointer(*proc);
+  // imoq_or: the OR group the next imoq_with goes into (RPG API)
+  orGrp int(10);
 end-ds;
 
 // ---- Stub entry point (called by generated stubs) ----------------

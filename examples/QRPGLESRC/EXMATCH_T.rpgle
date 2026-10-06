@@ -2,7 +2,7 @@
 // ------------------------------------------------------------------
 // EXMATCH_T - Answer differently depending on the arguments
 //
-// Features: IMOQWHEN ARGS((parm matcher value))
+// Features: IMOQWHEN ARGS((parm matcher value)), OR groups
 // Matchers: *EQ *NE *GT *GE *LT *LE *LIKE *BLANK *ANY *IN
 //           *BETWEEN *OMIT *NOTPASSED (see EXOMIT)
 // Run it with the driver EXMATCH.
@@ -59,4 +59,16 @@ dcl-proc main;
   // No stub matches: a loose mock returns zero
   expect(getPrice('Z9999') = 0 : 'no match returns zero');
   expect(getDiscount(50.00) = 0 : '50 is not greater than 100');
+
+  // OR across parameters: give entries a group number (the fifth
+  // element; *N skips the field). One whole group must match.
+  // Here: code VIP, or an amount from 20 to 30.
+  imoq('IMOQWHEN OBJ(EXPRICE) PROC(EX_DISCOUNT) +
+        ARGS((2 *EQ VIP *N 1) (1 *BETWEEN ''20,30'' *N 2)) +
+        RETURN(''7.00'')');
+
+  expect(getDiscount(5.00 : 'VIP') = 7.00 : 'group 1: code VIP');
+  expect(getDiscount(25.00 : 'SPRING') = 7.00 : 'group 2: 20 to 30');
+  expect(getDiscount(25.00) = 7.00 : 'group 2, code not passed');
+  expect(getDiscount(5.00 : 'SPRING') = 0 : 'neither group');
 end-proc;

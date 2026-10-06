@@ -40,6 +40,7 @@ dcl-proc runTests;
   if setup();
     test_selection();
     test_listMatchers();
+    test_orGroups();
     test_series();
     test_times();
     test_strict();
@@ -227,6 +228,63 @@ dcl-proc test_listMatchers;
           : '*IN value 2');
     fails('IMOQVERIFY OBJ(IMQTSRV) PROC(PRICE) +
            ARGS((1 *BETWEEN ''A,B,C''))' : 'two values');
+  on-error;
+    tst_error(imoq_lastError());
+  endmon;
+  tst_end();
+end-proc;
+
+dcl-proc test_orGroups;
+  tst_begin('OR groups: one group of ARGS entries must match');
+  monitor;
+    // item A0001, or a quantity over 100
+    cmd('IMOQRESET');
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) +
+         ARGS((1 *EQ A0001 *N 1) (2 *GT 100 *N 2)) SETPARM((2 0))');
+    tst_eqNum(0 : setQty('A0001' : 5) : 'group 1 matches');
+    tst_eqNum(0 : setQty('B0002' : 150) : 'group 2 matches');
+    tst_eqNum(0 : setQty('A0001' : 150) : 'both groups match');
+    tst_eqNum(5 : setQty('B0002' : 5) : 'neither group matches');
+
+    // entries without a group always apply: an A item, and a
+    // quantity below zero or over 100
+    cmd('IMOQRESET');
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) +
+         ARGS((1 *LIKE ''A%'') (2 *LT 0 *N 1) (2 *GT 100 *N 2)) +
+         SETPARM((2 50))');
+    tst_eqNum(50 : setQty('A0001' : -1) : 'always, and group 1');
+    tst_eqNum(50 : setQty('A0002' : 150) : 'always, and group 2');
+    tst_eqNum(10 : setQty('A0001' : 10) : 'always, but no group');
+    tst_eqNum(150 : setQty('B0002' : 150) : 'a group, but not always');
+
+    // all entries of a group must match
+    cmd('IMOQRESET');
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(SETQTY) +
+         ARGS((1 *EQ A0001 *N 1) (2 *EQ 5 *N 1) (1 *EQ B0002 *N 2)) +
+         SETPARM((2 0))');
+    tst_eqNum(0 : setQty('A0001' : 5) : 'all of group 1');
+    tst_eqNum(6 : setQty('A0001' : 6) : 'part of group 1');
+    tst_eqNum(0 : setQty('B0002' : 6) : 'group 2');
+
+    // group numbers don't need to start at 1 or follow each other
+    cmd('IMOQRESET');
+    cmd('IMOQWHEN OBJ(IMQTSRV) PROC(PRICE) +
+         ARGS((1 *EQ A0001 *N 7) (1 *EQ B0002 *N 64)) RETURN(9)');
+    tst_eqNum(9 : price('B0002') : 'groups 7 and 64');
+    tst_eqNum(0 : price('C0003') : 'groups 7 and 64: no match');
+
+    // verification and order checks take groups too
+    cmd('IMOQVERIFY OBJ(IMQTSRV) PROC(PRICE) +
+         ARGS((1 *EQ A0001 *N 1) (1 *EQ C0003 *N 2)) TIMES(*ONCE)');
+    cmd('IMOQVERIFY OBJ(IMQTSRV) PROC(SETQTY) TIMES(*NEVER)');
+    cmd('IMOQORDER OBJ(IMQTSRV) PROC(PRICE) AFTER(*START) +
+         ARGS((1 *EQ Z9999 *N 1) (1 *EQ B0002 *N 2))');
+    cmd('IMOQORDER OBJ(IMQTSRV) PROC(PRICE) +
+         ARGS((1 *EQ C0003 *N 1) (1 *EQ Z9999 *N 2))');
+    fails('IMOQVERIFY OBJ(IMQTSRV) PROC(PRICE) +
+           ARGS((1 *NE C0003) (1 *EQ Z9999 *N 1) (1 *EQ Y8888 *N 2))'
+          : 'with (1 *NE ''C0003'', (1 *EQ ''Z9999'') or +
+             (1 *EQ ''Y8888''))');
   on-error;
     tst_error(imoq_lastError());
   endmon;

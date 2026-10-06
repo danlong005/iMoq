@@ -226,10 +226,12 @@ dcl-proc ensureTables;
        + 'THRID CHAR(7) NOT NULL, THRMSGF CHAR(10) NOT NULL, '
        + 'THRLIB CHAR(10) NOT NULL, THRDTA VARCHAR(512) NOT NULL, '
        + 'RTNCNT INT NOT NULL, ANSOBJ CHAR(10) NOT NULL, '
-       + 'ANSLIB CHAR(10) NOT NULL, ANSPROC VARCHAR(256) NOT NULL)');
+       + 'ANSLIB CHAR(10) NOT NULL, ANSPROC VARCHAR(256) NOT NULL, '
+       + 'ORGRP INT NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_SARG (STUBID INT NOT NULL, '
        + 'PARMNO SMALLINT NOT NULL, MATCHER CHAR(10) NOT NULL, '
-       + 'VAL VARCHAR(1024) NOT NULL, FIELD VARCHAR(40) NOT NULL)');
+       + 'VAL VARCHAR(1024) NOT NULL, FIELD VARCHAR(40) NOT NULL, '
+       + 'GRP SMALLINT NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_SRTN (STUBID INT NOT NULL, '
        + 'SEQ INT NOT NULL, VAL VARCHAR(1024) NOT NULL)');
   runDdl('CREATE TABLE QTEMP.IMOQ_SSET (STUBID INT NOT NULL, '
@@ -962,11 +964,11 @@ dcl-proc findField;
 end-proc;
 
 // ==================================================================
-// Matchers: ARGS((ref matcher value) ...)
+// Matchers: ARGS((ref matcher value field group) ...)
 // ==================================================================
 
 // Unpack the ARGS list of a command: parameter (int2), matcher (10),
-// value (VARY 256), field (40)
+// value (VARY 256), field (40), OR group (int2)
 dcl-proc unpackMatchers;
   dcl-pi *n ind;
     blob pointer value;
@@ -993,6 +995,7 @@ dcl-proc unpackMatchers;
       setErr(err : 'IMQ0014' : 'ARGS entry ' + %char(i) + ': ' + msg);
       return *off;
     endif;
+    m(i).grp = int2At(e + 312);
   endfor;
   return *on;
 end-proc;
@@ -1025,6 +1028,11 @@ dcl-proc checkMatcher;
   if not imoq_validMatcher(m.matcher);
     setErr(err : 'IMQ0014' : what + ': ' + %trim(m.matcher)
          + ' is not a valid matcher');
+    return *off;
+  endif;
+  if m.grp < 0 or m.grp > IMOQ_MAXGRP;
+    setErr(err : 'IMQ0014' : what + ': OR group must be 1 to '
+         + %char(IMOQ_MAXGRP) + ', or none');
     return *off;
   endif;
 
@@ -1114,21 +1122,77 @@ dcl-proc describeMatchers;
     nM int(10) const;
   end-pi;
   dcl-s t varchar(1024);
+  dcl-s alts varchar(1024);
+  dcl-s one varchar(1024);
   dcl-s i int(10);
+  dcl-s g int(10);
   if nM = 0;
     return 'any arguments';
   endif;
-  for i = 1 to nM;
-    if i > 1;
-      t += ', ';
+  // the matchers that always apply, then the groups joined by "or"
+  for g = 0 to IMOQ_MAXGRP;
+    one = '';
+    for i = 1 to nM;
+      if m(i).grp <> g;
+        iter;
+      endif;
+      if one <> '';
+        one += ', ';
+      endif;
+      one += describeMatcher(m(i));
+    endfor;
+    if one = '';
+      iter;
     endif;
-    t += refText(m(i).parmNo : m(i).field) + ' ' + %trim(m(i).matcher);
-    if m(i).matcher <> '*ANY' and m(i).matcher <> '*OMIT'
-       and m(i).matcher <> '*NOTPASSED' and m(i).matcher <> '*BLANK';
-      t += ' ''' + %trimr(m(i).val) + '''';
+    if g = 0;
+      t = one;
+    else;
+      if alts <> '';
+        alts += ' or ';
+      endif;
+      alts += '(' + one + ')';
     endif;
   endfor;
+  if alts <> '';
+    if t <> '';
+      t += ', ';
+    endif;
+    t += alts;
+  endif;
   return '(' + t + ')';
+end-proc;
+
+dcl-proc describeMatcher;
+  dcl-pi *n varchar(1024);
+    m likeds(imoq_matcher_t) const;
+  end-pi;
+  dcl-s t varchar(1024);
+  t = refText(m.parmNo : m.field) + ' ' + %trim(m.matcher);
+  if m.matcher <> '*ANY' and m.matcher <> '*OMIT'
+     and m.matcher <> '*NOTPASSED' and m.matcher <> '*BLANK';
+    t += ' ''' + %trimr(m.val) + '''';
+  endif;
+  return t;
+end-proc;
+
+// OR groups: true when no matcher has a group, or when all the
+// matchers of one group matched. Group 0 failures the caller handles.
+dcl-proc groupsMatch;
+  dcl-pi *n ind;
+    used ind dim(IMOQ_MAXGRP) const;
+    failed ind dim(IMOQ_MAXGRP) const;
+  end-pi;
+  dcl-s g int(10);
+  dcl-s anyUsed ind;
+  for g = 1 to IMOQ_MAXGRP;
+    if used(g);
+      if not failed(g);
+        return *on;
+      endif;
+      anyUsed = *on;
+    endif;
+  endfor;
+  return not anyUsed;
 end-proc;
 
 // ==================================================================
@@ -1251,32 +1315,45 @@ dcl-proc callMatches;
   dcl-s off int(10);
   dcl-s fst char(1);
   dcl-s fval varchar(1024);
+  dcl-s ok ind;
+  dcl-s g int(10);
+  dcl-s used ind dim(IMOQ_MAXGRP);
+  dcl-s failed ind dim(IMOQ_MAXGRP);
 
   if nM = 0;
     return *on;
   endif;
   loadCallArgs(callId : st : vals : nArgs);
   for i = 1 to nM;
+    g = m(i).grp;
+    if g > 0;
+      used(g) = *on;
+      if failed(g);
+        iter;
+      endif;
+    endif;
     clear d;
     d.type = '*CHAR';
     if m(i).field <> '';
       findField(tgt.obj : tgt.proc : m(i).parmNo : m(i).field : d : off
                 : err);
       loadCallField(callId : m(i).parmNo : m(i).field : fst : fval);
-      if not imoq_match(m(i).matcher : m(i).val : fst : fval : d);
+      ok = imoq_match(m(i).matcher : m(i).val : fst : fval : d);
+    else;
+      if m(i).parmNo <= tgt.nDefs;
+        d = tgt.defs(m(i).parmNo);
+      endif;
+      ok = imoq_match(m(i).matcher : m(i).val : st(m(i).parmNo)
+                      : vals(m(i).parmNo) : d);
+    endif;
+    if not ok;
+      if g = 0;
         return *off;
       endif;
-      iter;
-    endif;
-    if m(i).parmNo <= tgt.nDefs;
-      d = tgt.defs(m(i).parmNo);
-    endif;
-    if not imoq_match(m(i).matcher : m(i).val : st(m(i).parmNo)
-                      : vals(m(i).parmNo) : d);
-      return *off;
+      failed(g) = *on;
     endif;
   endfor;
-  return *on;
+  return groupsMatch(used : failed);
 end-proc;
 
 dcl-proc loadCallIds;
@@ -1873,6 +1950,8 @@ dcl-proc imoq_stubSave export;
   dcl-s ansLib char(10);
   dcl-s ansProc varchar(256);
   dcl-s ansPtr pointer(*proc);
+  dcl-s grp int(5);
+  dcl-s orGrp int(10);
 
   clearErr(err);
   ensureTables();
@@ -2077,6 +2156,7 @@ dcl-proc imoq_stubSave export;
   ansObj = stub.ansObj;
   ansLib = stub.ansLib;
   ansProc = stub.ansProc;
+  orGrp = stub.orGrp;
   if stub.id = 0;
     exec sql select coalesce(max(stubid), 0) into :id
                from qtemp.imoq_stub;
@@ -2086,7 +2166,7 @@ dcl-proc imoq_stubSave export;
     id += 1;
     exec sql insert into qtemp.imoq_stub
       values(:id, :obj, :proc, :times, 0, :thrId, :thrMsgf, :thrLib,
-             :thrDta, :nRtn, :ansObj, :ansLib, :ansProc);
+             :thrDta, :nRtn, :ansObj, :ansLib, :ansProc, :orGrp);
     if sqlcode < 0;
       setErr(err : 'IMQ0015' : sqlFailText('Save stub'));
       return *off;
@@ -2110,7 +2190,7 @@ dcl-proc imoq_stubSave export;
                                      else 0 end,
                     thrid = :thrId, thrmsgf = :thrMsgf, thrlib = :thrLib,
                     thrdta = :thrDta, rtncnt = :nRtn, ansobj = :ansObj,
-                    anslib = :ansLib, ansproc = :ansProc
+                    anslib = :ansLib, ansproc = :ansProc, orgrp = :orGrp
               where stubid = :id;
     if sqlcode < 0;
       setErr(err : 'IMQ0015' : sqlFailText('Save stub'));
@@ -2136,8 +2216,9 @@ dcl-proc imoq_stubSave export;
     mt = stub.m(i).matcher;
     v = stub.m(i).val;
     fld = stub.m(i).field;
+    grp = stub.m(i).grp;
     exec sql insert into qtemp.imoq_sarg
-      values(:id, :parmNo, :mt, :v, :fld);
+      values(:id, :parmNo, :mt, :v, :fld, :grp);
   endfor;
   for i = 1 to stub.nRtn;
     seq = i;
@@ -2188,14 +2269,16 @@ dcl-proc imoq_stubLoad export;
   dcl-s ansObj char(10);
   dcl-s ansLib char(10);
   dcl-s ansProc varchar(256);
+  dcl-s grp int(5);
+  dcl-s orGrp int(10);
 
   clearErr(err);
   ensureTables();
   clear stub;
   exec sql select obj, proc, timesleft, used, thrid, thrmsgf, thrlib,
-                  thrdta, ansobj, anslib, ansproc
+                  thrdta, ansobj, anslib, ansproc, orgrp
              into :obj, :proc, :left, :used, :thrId, :thrMsgf, :thrLib,
-                  :thrDta, :ansObj, :ansLib, :ansProc
+                  :thrDta, :ansObj, :ansLib, :ansProc, :orGrp
              from qtemp.imoq_stub where stubid = :id;
   if sqlcode <> 0;
     setErr(err : 'IMQ0014' : 'Stub ' + %char(id) + ' no longer exists. '
@@ -2217,16 +2300,17 @@ dcl-proc imoq_stubLoad export;
   stub.ansObj = ansObj;
   stub.ansLib = ansLib;
   stub.ansProc = ansProc;
+  stub.orGrp = orGrp;
   if ansObj = PTRANSWER;
     stub.ansPtr = getPtrAnswer(id);
   endif;
 
   exec sql declare cLdArg cursor for
-    select parmno, matcher, val, field from qtemp.imoq_sarg
+    select parmno, matcher, val, field, grp from qtemp.imoq_sarg
      where stubid = :id order by parmno;
   exec sql open cLdArg;
   dow sqlcode = 0 and stub.nM < IMOQ_MAXP;
-    exec sql fetch next from cLdArg into :parmNo, :mt, :v, :fld;
+    exec sql fetch next from cLdArg into :parmNo, :mt, :v, :fld, :grp;
     if sqlcode <> 0;
       leave;
     endif;
@@ -2235,6 +2319,7 @@ dcl-proc imoq_stubLoad export;
     stub.m(stub.nM).matcher = mt;
     stub.m(stub.nM).val = v;
     stub.m(stub.nM).field = fld;
+    stub.m(stub.nM).grp = grp;
   enddo;
   exec sql close cLdArg;
 
@@ -3571,19 +3656,28 @@ dcl-proc stubMatches;
   dcl-s matcher char(10);
   dcl-s v varchar(1024);
   dcl-s fld varchar(40);
+  dcl-s grp int(5);
   dcl-s ok ind inz(*on);
   dcl-s k int(10);
   dcl-s hit int(10);
   dcl-ds d likeds(imoq_def_t);
+  dcl-s used ind dim(IMOQ_MAXGRP);
+  dcl-s failed ind dim(IMOQ_MAXGRP);
 
   exec sql declare cSarg cursor for
-    select parmno, matcher, val, field from qtemp.imoq_sarg
+    select parmno, matcher, val, field, grp from qtemp.imoq_sarg
      where stubid = :stubId order by parmno;
   exec sql open cSarg;
   dow sqlcode = 0;
-    exec sql fetch next from cSarg into :parmNo, :matcher, :v, :fld;
+    exec sql fetch next from cSarg into :parmNo, :matcher, :v, :fld, :grp;
     if sqlcode <> 0;
       leave;
+    endif;
+    if grp > 0;
+      used(grp) = *on;
+      if failed(grp);
+        iter;
+      endif;
     endif;
     clear d;
     d.type = '*CHAR';
@@ -3608,11 +3702,15 @@ dcl-proc stubMatches;
       ok = imoq_match(matcher : v : st(parmNo) : vals(parmNo) : d);
     endif;
     if not ok;
-      leave;
+      if grp = 0;
+        leave;
+      endif;
+      failed(grp) = *on;
+      ok = *on;
     endif;
   enddo;
   exec sql close cSarg;
-  return ok;
+  return ok and groupsMatch(used : failed);
 end-proc;
 
 // ------------------------------------------------------------------

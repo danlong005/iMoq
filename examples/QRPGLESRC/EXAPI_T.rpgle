@@ -4,7 +4,8 @@
 //
 //   stubbing     imoq_when, imoq_returns (series), imoq_setParm,
 //                imoq_times, IMOQ_ALWAYS
-//   matchers     all thirteen IMOQ_ matchers with imoq_with
+//   matchers     all thirteen IMOQ_ matchers with imoq_with, and
+//                imoq_or
 //   typedValues  numbers, dates, times and timestamps in imoq_with,
 //                imoq_returns and imoq_setParm
 //   throwing     imoq_throws with IMOQ_MOCK and with a real message
@@ -125,6 +126,7 @@ end-proc;
 // ------------------------------------------------------------------
 dcl-proc matchers;
   dcl-s h int(10);
+  dcl-s v int(10);
 
   imoq_reset();
 
@@ -197,6 +199,28 @@ dcl-proc matchers;
   expect(getDiscount(10 : 'SPRING') = 1 : 'IMOQ_ANY');
   expect(getDiscount(10 : *omit) = 2 : 'IMOQ_OMIT');
   expect(getDiscount(10) = 3 : 'IMOQ_NOTPASSED');
+
+  // OR: each imoq_or starts an alternative, and one alternative's
+  // matchers must all match. Matchers before the first imoq_or would
+  // apply to every alternative.
+  imoq_reset();
+  h = imoq_when('EXPRICE' : 'EX_DISCOUNT');
+  imoq_or(h);
+  imoq_with(h : 1 : IMOQ_GT : 100);
+  imoq_or(h);
+  imoq_with(h : 2 : IMOQ_EQ : 'VIP');
+  imoq_returns(h : 7);
+
+  expect(getDiscount(150 : 'SPRING') = 7 : 'imoq_or: over 100');
+  expect(getDiscount(10 : 'VIP') = 7 : 'imoq_or: code VIP');
+  expect(getDiscount(10 : 'SPRING') = 0 : 'imoq_or: neither');
+
+  v = imoq_verify('EXPRICE' : 'EX_DISCOUNT');
+  imoq_or(v);
+  imoq_with(v : 2 : IMOQ_EQ : 'VIP');
+  imoq_or(v);
+  imoq_with(v : 1 : IMOQ_LT : 20);
+  expect(imoq_calledTimes(v : 2) : imoq_lastError());
 end-proc;
 
 // ------------------------------------------------------------------
