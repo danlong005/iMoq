@@ -862,7 +862,7 @@ To test that code, call it directly from the driver job.
 
 ### Not supported yet
 
-Some things Mockito and Moq can do aren't in iMoq yet. The planned work is tracked in [todo.md](../todo.md).
+Some things Mockito and Moq can do aren't in iMoq.
 
 - **Nested OR.** [OR groups](#either-or-matchers-or-groups) are one level deep: matchers that always apply, and alternatives of matchers that must all match. An alternative can't hold an OR of its own; write it out as more groups.
 
