@@ -121,8 +121,9 @@ end-proc;
 
 // ------------------------------------------------------------------
 // Matchers: imoq_with(h : parmNo : matcher : value). All matchers
-// on one stub must match. Values without a value: IMOQ_ANY,
-// IMOQ_BLANK, IMOQ_OMIT and IMOQ_NOTPASSED.
+// on one stub must match, unless imoq_or splits them into
+// alternatives. Matchers without a value: IMOQ_ANY, IMOQ_BLANK,
+// IMOQ_OMIT and IMOQ_NOTPASSED.
 // ------------------------------------------------------------------
 dcl-proc matchers;
   dcl-s h int(10);

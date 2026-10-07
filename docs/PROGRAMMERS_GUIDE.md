@@ -303,6 +303,7 @@ iMoq doesn't read prototypes. You describe each parameter as `(type length decim
 | `char(10)` | `(*CHAR 10)` | `(*CHAR 10)` |
 | `char(10) const` | `(*CHAR 10)` | `(*CHAR 10 *CONST)` |
 | `varchar(50)` | `(*VARCHAR 50)` | `(*VARCHAR 50)` |
+| `varchar(50) value` | n/a (programs pass by reference) | `(*VARCHAR 50 *VALUE)` |
 | `packed(11:2) const` | `(*PACKED 11 2)` | `(*PACKED 11 2 *CONST)` |
 | `zoned(7:0)` | `(*ZONED 7 0)` | `(*ZONED 7 0)` |
 | `int(10) value` | n/a (programs pass by reference) | `(*INT 10 0 *VALUE)` |
@@ -310,7 +311,7 @@ iMoq doesn't read prototypes. You describe each parameter as `(type length decim
 | `ind` | `(*IND)` | `(*IND)` |
 | `date` / `time` / `timestamp` (*ISO) | `(*DATE)` `(*TIME)` `(*TIMESTAMP)` | same |
 | `pointer` | `(*PTR)` | `(*PTR)` |
-| `likeds(cust_t)` (all-character subfields) | `(*CHAR 120)` using `%size(cust_t)` | same |
+| `likeds(cust_t)`, or an array | `(*CHAR 120)` using `%size(cust_t)`, then `IMOQFIELD` for the subfields | same |
 
 ### Things to know
 
@@ -354,7 +355,7 @@ IMOQFIELD  OBJ(ORDSRV) PROC(ADD_ORDER) PARM(0) +
 - **Program mocks** take `IMOQFIELD` without `PROC`.
 - **Declaring a parameter's fields again replaces them.** Running `IMOQPROC` or `IMOQPGM` again drops all of that procedure's fields.
 
-To use a subfield, add its name as the last element of an `ARGS` or `SETPARM` entry, or use `FIELD()` on `IMOQGETARG`. An array element is `NAME(i)`, and it needs quotes in a command because of its parentheses:
+To use a subfield, add its name as the last element of an `ARGS` or `SETPARM` entry, or use `FIELD()` on `IMOQGETARG`. An array element is `NAME(i)`, and it needs quotes in a command because of its parentheses. A field of a data structure inside the parameter is `DS.NAME`, as in `LINES(2).QTY` (see [below](#data-structures-inside-data-structures)):
 
 ```
 IMOQWHEN   OBJ(ORDSRV) PROC(ADD_ORDER) +
@@ -550,7 +551,7 @@ From RPG, `imoq_answers(h : %paddr(taxAnswer))` uses any procedure of the test, 
 
 | Procedure | What it does |
 |---|---|
-| `imoq_answerArg(parmNo : field)` | The argument (or subfield) as it arrived, as text; `*OMIT` or `*NOTPASSED` for missing ones |
+| `imoq_answerArg(parmNo : field)` | The argument (or subfield) as it arrived, as text, up to 32,000 characters; `*OMIT` or `*NOTPASSED` for missing ones |
 | `imoq_answerArgNum` · `…Date` · `…Time` · `…Timestamp` · `…Ind` | The argument as a `packed(31:9)`, date, time, timestamp or indicator |
 | `imoq_answerArgPassed(parmNo : field)` | `*off` if the argument was `*OMIT` or not passed |
 | `imoq_answerReturns(value)` | Sets the return value |

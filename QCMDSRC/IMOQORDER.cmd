@@ -19,7 +19,7 @@
              ELEM       TYPE(*CHAR) LEN(256) VARY(*YES *INT2) +
                           CASE(*MIXED) DFT(' ') PROMPT('Value')
              ELEM       TYPE(*CHAR) LEN(40) DFT(' ') +
-                          PROMPT('Field (IMOQFIELD), or NAME(i)')
+                          PROMPT('Field: NAME, NAME(i), DS.NAME')
              ELEM       TYPE(*INT2) RANGE(1 64) DFT(*NONE) +
                           SPCVAL((*NONE 0)) +
                           PROMPT('OR group (*NONE = always)')

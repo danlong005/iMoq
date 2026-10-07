@@ -98,7 +98,8 @@ end-pr;
 // Add an argument matcher to a stub or a verification.
 // IMOQ_ANY, IMOQ_BLANK, IMOQ_OMIT and IMOQ_NOTPASSED take no value.
 // field matches a subfield declared with IMOQFIELD instead of the
-// whole parameter: NAME, or NAME(i) for an array element.
+// whole parameter: NAME, NAME(i) for an array element, or DS.NAME
+// for a field of a *DS field (LINES(2).QTY).
 dcl-pr imoq_withChar extproc('IMOQ_WITHCHAR');
   h int(10) const;
   parmNo int(10) const;
@@ -191,7 +192,7 @@ dcl-pr imoq_returns overload(imoq_returnsChar : imoq_returnsNum
 /endif
 
 // Fill an output parameter when the stub answers. With field, fill
-// one subfield (NAME or NAME(i)); parameter 0 with a field sets a
+// one subfield (NAME, NAME(i) or DS.NAME); parameter 0 with a field sets a
 // subfield of the data structure the procedure returns.
 dcl-pr imoq_setParmChar extproc('IMOQ_SETPARMCHAR');
   h int(10) const;
@@ -252,7 +253,7 @@ end-pr;
 
 // Copy an argument, as it arrived, into an output parameter, or into
 // the return value (toParm 0). The fields name subfields declared
-// with IMOQFIELD (NAME, or NAME(i)).
+// with IMOQFIELD (NAME, NAME(i) or DS.NAME).
 dcl-pr imoq_copyArg extproc('IMOQ_COPYARG');
   h int(10) const;
   fromParm int(10) const;

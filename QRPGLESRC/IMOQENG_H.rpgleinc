@@ -38,7 +38,8 @@ end-ds;
 
 // Argument matcher: ARGS((parmNo matcher value field group)).
 // field is blank for the whole parameter, else a subfield declared
-// with IMOQFIELD: NAME, or NAME(n) for an array element.
+// with IMOQFIELD: NAME, NAME(n) for an array element, or a *DS path
+// such as LINES(2).QTY.
 // grp 0 must always match; of the matchers with a group number, all
 // of at least one group must match (OR between the groups).
 dcl-ds imoq_matcher_t qualified template;
